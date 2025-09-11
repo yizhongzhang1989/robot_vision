@@ -4,3 +4,6 @@
 [submodule "ThirdParty/FlowFormerPlusPlusServer"]
 	path = ThirdParty/FlowFormerPlusPlusServer
 	url = https://github.com/yizhongzhang1989/FlowFormerPlusPlusServer.git
+[submodule "ThirdParty/ImageLabelingWeb"]
+	path = ThirdParty/ImageLabelingWeb
+	url = https://github.com/yizhongzhang1989/ImageLabelingWeb.git
