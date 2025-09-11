@@ -189,6 +189,7 @@ Thumbs.db
 # Dataset and data files
 data/raw/
 data/processed/
+test_data/
 *.bag
 *.rosbag
 
