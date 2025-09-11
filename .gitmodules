@@ -1,0 +1,6 @@
+[submodule "ThirdParty/camera_calibration_toolkit"]
+	path = ThirdParty/camera_calibration_toolkit
+	url = https://github.com/yizhongzhang1989/camera_calibration_toolkit.git
+[submodule "ThirdParty/FlowFormerPlusPlusServer"]
+	path = ThirdParty/FlowFormerPlusPlusServer
+	url = https://github.com/yizhongzhang1989/FlowFormerPlusPlusServer.git
