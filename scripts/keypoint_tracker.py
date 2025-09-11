@@ -5,6 +5,8 @@ Keypoint Tracking with Optical Flow
 This script loads keypoints from test_data/ref_img_knobs.json, computes optical flow
 between test_data/ref_img.jpg and test_data/comp_img.jpg, and tracks where the keypoints move
 to in the comparison image. Results are saved to test_data/output/.
+
+Paths are automatically determined relative to the script location.
 """
 
 import os
@@ -17,8 +19,14 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import sys
 import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'ThirdParty', 'FlowFormerPlusPlusServer'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'ThirdParty', 'FlowFormerPlusPlusServer'))
 from flowformer_api import FlowFormerClient
+
+# Global paths - automatically determine based on script location
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+TEST_DATA_DIR = os.path.join(PROJECT_ROOT, 'test_data')
+OUTPUT_DIR = os.path.join(TEST_DATA_DIR, 'output')
 
 
 def load_keypoints(json_path):
@@ -144,7 +152,7 @@ def display_tracking_results():
         # Switch to interactive backend for display
         matplotlib.use('TkAgg')
         
-        img = Image.open("test_data/output/keypoint_tracking.png")
+        img = Image.open(os.path.join(OUTPUT_DIR, "keypoint_tracking.png"))
         
         # Create matplotlib figure
         plt.figure(figsize=(16, 10))
@@ -153,7 +161,7 @@ def display_tracking_results():
         plt.title('Keypoint Tracking Results', fontsize=16, fontweight='bold', pad=20)
         
         # Load and display tracking data
-        with open("test_data/output/tracked_keypoints.json", 'r') as f:
+        with open(os.path.join(OUTPUT_DIR, "tracked_keypoints.json"), 'r') as f:
             data = json.load(f)
         
         # Print tracking summary
@@ -205,9 +213,9 @@ def main():
     print()
     
     # Check for required files
-    ref_img_path = "test_data/ref_img.jpg"
-    comp_img_path = "test_data/comp_img.jpg"
-    keypoints_path = "test_data/ref_img_knobs.json"
+    ref_img_path = os.path.join(TEST_DATA_DIR, "ref_img.jpg")
+    comp_img_path = os.path.join(TEST_DATA_DIR, "comp_img.jpg")
+    keypoints_path = os.path.join(TEST_DATA_DIR, "ref_img_knobs.json")
     
     missing_files = []
     for file_path in [ref_img_path, comp_img_path, keypoints_path]:
@@ -294,15 +302,15 @@ def main():
         tracking_vis = visualize_keypoint_tracking(ref_img, comp_img, resized_keypoints, tracked_keypoints)
         
         # Save results
-        os.makedirs("test_data/output", exist_ok=True)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
         
         # Save visualization
-        vis_output_path = "test_data/output/keypoint_tracking.png"
+        vis_output_path = os.path.join(OUTPUT_DIR, "keypoint_tracking.png")
         Image.fromarray(tracking_vis).save(vis_output_path)
         print(f"✅ Keypoint tracking visualization saved to: {vis_output_path}")
         
         # Save tracked keypoints as JSON
-        tracked_output_path = "test_data/output/tracked_keypoints.json"
+        tracked_output_path = os.path.join(OUTPUT_DIR, "tracked_keypoints.json")
         
         # Convert numpy types to native Python types for JSON serialization
         def convert_numpy_types(obj):
@@ -362,7 +370,7 @@ if __name__ == "__main__":
         print("   - Interactive display window opened showing results")
     else:
         print("\n🔧 Troubleshooting:")
-        print("   - Ensure all required files exist in test_data/ (ref_img.jpg, comp_img.jpg, ref_img_knobs.json)")
+        print(f"   - Ensure all required files exist in {TEST_DATA_DIR} (ref_img.jpg, comp_img.jpg, ref_img_knobs.json)")
         print("   - Check server connectivity")
         print("   - Verify image formats are supported")
         print("\n📺 To display results manually, run:")
