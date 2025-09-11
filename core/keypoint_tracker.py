@@ -15,7 +15,16 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from .utils import load_keypoints, resize_keypoints, visualize_tracking_results, get_project_paths
+from core.utils import load_keypoints, resize_keypoints, visualize_tracking_results, get_project_paths
+
+# Add ThirdParty to path for flowformer_api import
+_paths = get_project_paths()
+sys.path.insert(0, _paths['thirdparty'])
+
+try:
+    from flowformer_api import FlowFormerClient
+except ImportError:
+    FlowFormerClient = None
 
 
 class KeypointTracker:
@@ -30,14 +39,10 @@ class KeypointTracker:
         self.server_url = server_url
         self.paths = get_project_paths()
         
-        # Add ThirdParty to path for flowformer_api import
-        sys.path.insert(0, self.paths['thirdparty'])
-        
-        try:
-            from flowformer_api import FlowFormerClient
-            self.client = FlowFormerClient(server_url=server_url)
-        except ImportError:
+        if FlowFormerClient is None:
             raise ImportError("FlowFormer API not found. Check ThirdParty directory.")
+        
+        self.client = FlowFormerClient(server_url=server_url)
     
     def track_keypoints_with_flow(self, keypoints, flow):
         """Track keypoints using optical flow."""
