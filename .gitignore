@@ -209,6 +209,7 @@ logs/
 outputs/
 results/
 experiments/
+output/
 
 # Configuration files with sensitive data
 config/secrets.yaml

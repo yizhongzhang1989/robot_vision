@@ -4,9 +4,9 @@ Simple Keypoint Tracker Demo
 ============================
 
 This script demonstrates basic usage of the core.KeypointTracker class
-to perform keypoint tracking with optical flow.
+to perform keypoint tracking with optical flow using sample data.
 
-Simple and clean implementation using the core module.
+Uses images from sample_data/flow_image_pair/ and outputs to output/.
 """
 
 import os

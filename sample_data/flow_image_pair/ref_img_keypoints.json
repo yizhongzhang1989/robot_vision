@@ -1,0 +1,418 @@
+{
+  "image": {
+    "width": 800,
+    "height": 600,
+    "filename": "ref_img.jpg"
+  },
+  "keypoints": [
+    {
+      "id": 1,
+      "name": "Point 1",
+      "x": 264.359864,
+      "y": 262.04186,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 2,
+      "name": "Point 2",
+      "x": 371.350559,
+      "y": 264.834447,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 3,
+      "name": "Point 3",
+      "x": 499.538201,
+      "y": 263.65687,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 4,
+      "name": "Point 4",
+      "x": 265.500634,
+      "y": 314.295422,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 5,
+      "name": "Point 5",
+      "x": 370.439625,
+      "y": 314.132901,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 6,
+      "name": "Point 6",
+      "x": 498.503136,
+      "y": 313.530436,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 7,
+      "name": "Point 7",
+      "x": 265.70398,
+      "y": 364.56188,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 8,
+      "name": "Point 8",
+      "x": 370.968799,
+      "y": 363.939486,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 9,
+      "name": "Point 9",
+      "x": 497.738002,
+      "y": 362.363353,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 10,
+      "name": "Point 10",
+      "x": 284.264806,
+      "y": 261.039288,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 11,
+      "name": "Point 11",
+      "x": 310.815347,
+      "y": 261.039288,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 12,
+      "name": "Point 12",
+      "x": 310.815347,
+      "y": 273.913844,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 13,
+      "name": "Point 13",
+      "x": 283.931536,
+      "y": 274.024832,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 14,
+      "name": "Point 14",
+      "x": 334.880268,
+      "y": 261.571156,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 15,
+      "name": "Point 15",
+      "x": 360.539947,
+      "y": 261.448495,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 16,
+      "name": "Point 16",
+      "x": 360.908268,
+      "y": 273.714517,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 17,
+      "name": "Point 17",
+      "x": 335.003042,
+      "y": 274.082498,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 18,
+      "name": "Point 18",
+      "x": 508.281001,
+      "y": 261.888976,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 19,
+      "name": "Point 19",
+      "x": 533.654245,
+      "y": 262.024537,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 20,
+      "name": "Point 20",
+      "x": 533.925616,
+      "y": 273.953861,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 21,
+      "name": "Point 21",
+      "x": 508.145316,
+      "y": 273.953861,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 22,
+      "name": "Point 22",
+      "x": 556.585144,
+      "y": 262.024537,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 23,
+      "name": "Point 23",
+      "x": 581.822701,
+      "y": 262.024537,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 24,
+      "name": "Point 24",
+      "x": 581.958387,
+      "y": 273.818301,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 25,
+      "name": "Point 25",
+      "x": 556.585144,
+      "y": 273.818301,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 26,
+      "name": "Point 26",
+      "x": 284.533149,
+      "y": 311.119208,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 27,
+      "name": "Point 27",
+      "x": 311.07536,
+      "y": 310.669755,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 28,
+      "name": "Point 28",
+      "x": 311.375272,
+      "y": 322.50534,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 29,
+      "name": "Point 29",
+      "x": 284.383193,
+      "y": 322.804975,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 30,
+      "name": "Point 30",
+      "x": 335.286257,
+      "y": 310.497204,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 31,
+      "name": "Point 31",
+      "x": 360.808216,
+      "y": 310.000482,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 32,
+      "name": "Point 32",
+      "x": 360.973943,
+      "y": 322.41853,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 33,
+      "name": "Point 33",
+      "x": 335.12053,
+      "y": 322.584104,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 34,
+      "name": "Point 34",
+      "x": 507.300476,
+      "y": 309.928632,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 35,
+      "name": "Point 35",
+      "x": 532.493083,
+      "y": 310.078449,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 36,
+      "name": "Point 36",
+      "x": 532.343127,
+      "y": 321.464581,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 37,
+      "name": "Point 37",
+      "x": 507.300476,
+      "y": 321.614399,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 38,
+      "name": "Point 38",
+      "x": 554.986482,
+      "y": 309.928632,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 39,
+      "name": "Point 39",
+      "x": 580.329045,
+      "y": 309.928632,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 40,
+      "name": "Point 40",
+      "x": 580.029133,
+      "y": 321.914034,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 41,
+      "name": "Point 41",
+      "x": 554.986482,
+      "y": 321.914034,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 42,
+      "name": "Point 42",
+      "x": 285.132511,
+      "y": 359.260482,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 43,
+      "name": "Point 43",
+      "x": 311.674722,
+      "y": 358.960847,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 44,
+      "name": "Point 44",
+      "x": 311.974634,
+      "y": 370.946249,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 45,
+      "name": "Point 45",
+      "x": 285.432423,
+      "y": 371.695337,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 46,
+      "name": "Point 46",
+      "x": 335.086035,
+      "y": 358.93474,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 47,
+      "name": "Point 47",
+      "x": 360.970036,
+      "y": 358.712764,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 48,
+      "name": "Point 48",
+      "x": 361.192216,
+      "y": 371.032383,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 49,
+      "name": "Point 49",
+      "x": 335.197125,
+      "y": 371.143371,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 50,
+      "name": "Point 50",
+      "x": 506.317205,
+      "y": 357.698153,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 51,
+      "name": "Point 51",
+      "x": 531.209899,
+      "y": 357.248701,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 52,
+      "name": "Point 52",
+      "x": 531.059943,
+      "y": 368.78465,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 53,
+      "name": "Point 53",
+      "x": 506.167249,
+      "y": 369.084285,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 54,
+      "name": "Point 54",
+      "x": 554.00321,
+      "y": 357.098883,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 55,
+      "name": "Point 55",
+      "x": 578.895905,
+      "y": 357.098883,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 57,
+      "name": "Point 57",
+      "x": 578.745949,
+      "y": 368.78465,
+      "coordinates_type": "original_image_pixels"
+    },
+    {
+      "id": 58,
+      "name": "Point 58",
+      "x": 554.00321,
+      "y": 368.78465,
+      "coordinates_type": "original_image_pixels"
+    }
+  ],
+  "metadata": {
+    "created_at": "2025-09-15T09:59:28.086Z",
+    "tool_version": "2.0.0",
+    "total_keypoints": 57,
+    "features": [
+      "named_keypoints",
+      "drag_drop_support",
+      "mode_switching"
+    ]
+  }
+}

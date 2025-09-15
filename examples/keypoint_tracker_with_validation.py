@@ -37,12 +37,12 @@ def main():
         print("📊 Preparing for reverse validation...")
         
         # Load images
-        ref_img_path = os.path.join(tracker.paths['test_data'], 'ref_img.jpg')
-        comp_img_path = os.path.join(tracker.paths['test_data'], 'comp_img.jpg')
+        ref_img_path = os.path.join(tracker.paths['sample_data'], 'flow_image_pair', 'ref_img.jpg')
+        comp_img_path = os.path.join(tracker.paths['sample_data'], 'flow_image_pair', 'comp_img.jpg')
         ref_img, comp_img = tracker.load_images(ref_img_path=ref_img_path, comp_img_path=comp_img_path)
 
         # Load and resize original keypoints
-        keypoints_json_path = os.path.join(tracker.paths['test_data'], 'ref_img_knobs.json')
+        keypoints_json_path = os.path.join(tracker.paths['sample_data'], 'flow_image_pair', 'ref_img_keypoints.json')
         original_keypoints, original_size = load_keypoints(keypoints_json_path)
         resized_original_keypoints = resize_keypoints(original_keypoints, original_size, ref_img.shape[:2][::-1])
         

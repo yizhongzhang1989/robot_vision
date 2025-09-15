@@ -85,9 +85,9 @@ class KeypointTracker:
             target_width: Target width for resizing (None to keep original size)
         """
         if ref_img_path is None:
-            ref_img_path = os.path.join(self.paths['test_data'], 'ref_img.jpg')
+            ref_img_path = os.path.join(self.paths['sample_data'], 'flow_image_pair', 'ref_img.jpg')
         if comp_img_path is None:
-            comp_img_path = os.path.join(self.paths['test_data'], 'comp_img.jpg')
+            comp_img_path = os.path.join(self.paths['sample_data'], 'flow_image_pair', 'comp_img.jpg')
             
         # Load images as PIL first for resizing
         ref_img_pil = Image.open(ref_img_path)
@@ -131,7 +131,7 @@ class KeypointTracker:
         try:
             # Set default paths
             if keypoints_json_path is None:
-                keypoints_json_path = os.path.join(self.paths['test_data'], 'ref_img_knobs.json')
+                keypoints_json_path = os.path.join(self.paths['sample_data'], 'flow_image_pair', 'ref_img_keypoints.json')
             if output_dir is None:
                 output_dir = self.paths['output']
                 
