@@ -107,6 +107,7 @@ def get_project_paths():
         'project_root': project_root,
         'core_dir': core_dir,
         'test_data': os.path.join(project_root, 'test_data'),
+        'test_image': os.path.join(project_root, 'test_image'),
         'output': os.path.join(project_root, 'test_data', 'output'),
         'thirdparty': os.path.join(project_root, 'ThirdParty', 'FlowFormerPlusPlusServer')
     }
