@@ -13,11 +13,11 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.keypoint_tracker import KeypointTracker
-
+from core.utils import load_keypoints, resize_keypoints
 
 def main():
-    """Test keypoint tracking with reverse validation."""
-    print("🧪 Testing Keypoint Tracking with Reverse Validation")
+    """Keypoint tracking with reverse validation."""
+    print("🧪 Start Keypoint Tracking with Reverse Validation")
     print("=" * 60)
     
     try:
@@ -25,8 +25,7 @@ def main():
         print("\n🚀 Initializing KeypointTracker...")
         tracker = KeypointTracker()
         
-        # Step 1: Run normal tracking
-        print("\n📊 Running keypoint tracking...")
+        # Step 1: Normal keypoint tracking
         tracking_result = tracker.run_tracking(verbose=True)
         
         if not tracking_result['success']:
@@ -34,13 +33,14 @@ def main():
             print(f"   Error: {tracking_result.get('error', 'Unknown')}")
             return False
         
-        # Step 2: Load images and original keypoints for validation
-        print("\n� Preparing for reverse validation...")
-        from core.utils import load_keypoints, resize_keypoints
+        # Step 2: Load images and original keypoints for reverse validation
+        print("📊 Preparing for reverse validation...")
         
         # Load images
-        ref_img, comp_img = tracker.load_images()
-        
+        ref_img_path = os.path.join(tracker.paths['test_data'], 'test_ref.png')
+        comp_img_path = os.path.join(tracker.paths['test_data'], 'test_comp.png')
+        ref_img, comp_img = tracker.load_images(ref_img_path=ref_img_path, comp_img_path=comp_img_path)
+
         # Load and resize original keypoints
         keypoints_json_path = os.path.join(tracker.paths['test_data'], 'ref_img_knobs.json')
         original_keypoints, original_size = load_keypoints(keypoints_json_path)

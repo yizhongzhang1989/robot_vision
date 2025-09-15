@@ -259,7 +259,6 @@ class KeypointTracker:
             
             if verbose:
                 print("🔄 Starting reverse validation...")
-                print("   Computing reverse optical flow (comp_img -> ref_img)...")
             
             # Compute reverse optical flow (from comp_img back to ref_img)
             start_time = time.time()
@@ -297,14 +296,14 @@ class KeypointTracker:
             
             # Create validation visualization
             if verbose:
-                print("🎨 Creating validation visualization...")
+                print("🎨 Creating reverse validation visualization...")
             validation_vis = visualize_reverse_validation_results(
                 ref_img, comp_img, original_keypoints, tracked_keypoints, 
                 reverse_tracked_keypoints, comparison_results
             )
             
             # Save visualization
-            vis_output_path = os.path.join(output_dir, "keypoint_validation_visualization.png")
+            vis_output_path = os.path.join(output_dir, "reverse_validation_visualization.png")
             Image.fromarray(validation_vis).save(vis_output_path)
             
             # Prepare output data
@@ -325,7 +324,7 @@ class KeypointTracker:
             }
             
             # Save validation results
-            validation_output_path = os.path.join(output_dir, "keypoint_validation.json")
+            validation_output_path = os.path.join(output_dir, "keypoint_reverse_validation.json")
             with open(validation_output_path, 'w') as f:
                 json.dump(output_data, f, indent=2)
             
