@@ -293,69 +293,6 @@ download_model_checkpoints() {
     print_success "Model checkpoint download completed!"
 }
 
-# Function to create directory structure
-setup_directory_structure() {
-    print_step "Setting up directory structure..."
-    
-    # Create necessary directories
-    local dirs=(
-        "models"
-        "models/flowformer_plus"
-        "models/checkpoints"
-        "configs"
-        "configs/model_configs"
-        "server"
-        "server/api"
-        "server/web"
-        "server/web/templates"
-        "server/web/static"
-        "server/web/static/css"
-        "server/web/static/js"
-        "server/web/static/assets"
-        "server/config"
-        "logs"
-        "temp"
-    )
-    
-    for dir in "${dirs[@]}"; do
-        if [ ! -d "$dir" ]; then
-            print_progress "Creating directory: $dir"
-            mkdir -p "$dir"
-        fi
-    done
-    
-    print_success "Directory structure created!"
-}
-
-# Function to copy/link model checkpoints
-setup_model_links() {
-    print_step "Setting up model checkpoint links..."
-    
-    # Create symbolic links to FlowFormer++ checkpoints
-    local ffp_checkpoints_dir="ThirdParty/FlowFormerPlusPlusServer/checkpoints"
-    local models_checkpoints_dir="models/checkpoints"
-    
-    if [ -d "$ffp_checkpoints_dir" ]; then
-        print_progress "Linking FlowFormer++ checkpoints..."
-        
-        for checkpoint in "$ffp_checkpoints_dir"/*.pth; do
-            if [ -f "$checkpoint" ]; then
-                local filename=$(basename "$checkpoint")
-                local link_path="$models_checkpoints_dir/$filename"
-                
-                if [ ! -L "$link_path" ] && [ ! -f "$link_path" ]; then
-                    ln -s "../../$checkpoint" "$link_path"
-                    print_progress "Linked: $filename"
-                fi
-            fi
-        done
-        
-        print_success "Model checkpoints linked successfully!"
-    else
-        print_warning "FlowFormer++ checkpoints directory not found"
-    fi
-}
-
 # Function to run basic tests
 run_basic_tests() {
     print_step "Running basic functionality tests..."
@@ -394,8 +331,7 @@ display_setup_info() {
     echo "   • Core modules: core/"
     echo "   • Examples: examples/"
     echo "   • Third-party tools: ThirdParty/"
-    echo "   • Model checkpoints: models/checkpoints/"
-    echo "   • Configuration: configs/"
+    echo "   • Model checkpoints: ThirdParty/FlowFormerPlusPlusServer/checkpoints/"
     echo ""
     
     if [ "$SKIP_CONDA" = false ]; then
@@ -446,12 +382,6 @@ cleanup_on_failure() {
         conda env remove -n "$CONDA_ENV_NAME" -y || true
     fi
     
-    # Remove incomplete directories
-    if [ -d "models" ] && [ -z "$(ls -A models)" ]; then
-        print_info "Removing empty models directory..."
-        rmdir models || true
-    fi
-    
     print_error "Setup was interrupted. You may need to run the script again."
     exit 1
 }
@@ -485,9 +415,6 @@ main() {
     update_submodules
     echo ""
     
-    setup_directory_structure
-    echo ""
-    
     create_conda_environment
     echo ""
     
@@ -495,9 +422,6 @@ main() {
     echo ""
     
     download_model_checkpoints
-    echo ""
-    
-    setup_model_links
     echo ""
     
     run_basic_tests
