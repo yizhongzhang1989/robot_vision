@@ -15,7 +15,8 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from PIL import Image
 
-from core.utils import load_keypoints, resize_keypoints, visualize_tracking_results, get_project_paths
+from core.utils import (load_keypoints, resize_keypoints, visualize_tracking_results, 
+                        compare_keypoints, visualize_reverse_validation_results, get_project_paths)
 
 # Add ThirdParty to path for flowformer_api import
 _paths = get_project_paths()
@@ -235,6 +236,128 @@ class KeypointTracker:
                 'error': str(e)
             }
     
+    def reverse_validation(self, tracked_keypoints, original_keypoints, ref_img, comp_img, 
+                          output_dir=None, verbose=True):
+        """Perform reverse validation by tracking from comp_img back to ref_img.
+        
+        Args:
+            tracked_keypoints: Keypoints detected in comp_img
+            original_keypoints: Original keypoints from ref_img
+            ref_img: Reference image (numpy array)
+            comp_img: Comparison image (numpy array)
+            output_dir: Output directory for results
+            verbose: Whether to print progress messages
+            
+        Returns:
+            dict: Reverse validation results including comparison metrics
+        """
+        try:
+            if output_dir is None:
+                output_dir = self.paths['output']
+            
+            os.makedirs(output_dir, exist_ok=True)
+            
+            if verbose:
+                print("🔄 Starting reverse validation...")
+                print("   Computing reverse optical flow (comp_img -> ref_img)...")
+            
+            # Compute reverse optical flow (from comp_img back to ref_img)
+            start_time = time.time()
+            reverse_flow = self.client.compute_flow(comp_img, ref_img)
+            reverse_flow_time = time.time() - start_time
+            
+            if verbose:
+                print(f"✅ Reverse flow computed in {reverse_flow_time:.2f}s")
+            
+            # Create keypoints from tracked positions for reverse tracking
+            reverse_input_keypoints = []
+            for i, kp in enumerate(tracked_keypoints):
+                reverse_kp = {
+                    'id': kp.get('id', i + 1),
+                    'name': kp.get('name', f'keypoint_{i+1}'),
+                    'x': kp['new_x'],  # Use the tracked position as input
+                    'y': kp['new_y'],
+                    'coordinates_type': 'image_pixels'
+                }
+                reverse_input_keypoints.append(reverse_kp)
+            
+            if verbose:
+                print(f"🎯 Reverse tracking {len(reverse_input_keypoints)} keypoints...")
+            
+            # Track keypoints using reverse flow
+            reverse_tracked_keypoints = self.track_keypoints_with_flow(reverse_input_keypoints, reverse_flow)
+            
+            # Compare with original keypoints
+            comparison_results = compare_keypoints(original_keypoints, reverse_tracked_keypoints)
+            
+            if verbose:
+                for result in comparison_results['individual_results']:
+                    status = "✅" if result['error_within_threshold'] else "❌"
+                    print(f"   {status} {result['keypoint_name']}: error = {result['error_distance_pixels']:.2f} pixels")
+            
+            # Create validation visualization
+            if verbose:
+                print("🎨 Creating validation visualization...")
+            validation_vis = visualize_reverse_validation_results(
+                ref_img, comp_img, original_keypoints, tracked_keypoints, 
+                reverse_tracked_keypoints, comparison_results
+            )
+            
+            # Save visualization
+            vis_output_path = os.path.join(output_dir, "keypoint_validation_visualization.png")
+            Image.fromarray(validation_vis).save(vis_output_path)
+            
+            # Prepare output data
+            output_data = {
+                "validation_summary": {
+                    "total_keypoints": len(original_keypoints),
+                    "average_error_pixels": comparison_results['average_error'],
+                    "max_error_pixels": comparison_results['max_error'],
+                    "min_error_pixels": comparison_results['min_error'],
+                    "validation_passed": comparison_results['validation_passed'],
+                    "error_threshold_pixels": comparison_results['error_threshold']
+                },
+                "keypoint_comparisons": comparison_results['individual_results'],
+                "reverse_flow_computation_time": float(reverse_flow_time),
+                "original_keypoints": self._convert_numpy_types(original_keypoints),
+                "forward_tracked_keypoints": self._convert_numpy_types(tracked_keypoints),
+                "reverse_tracked_keypoints": self._convert_numpy_types(reverse_tracked_keypoints)
+            }
+            
+            # Save validation results
+            validation_output_path = os.path.join(output_dir, "keypoint_validation.json")
+            with open(validation_output_path, 'w') as f:
+                json.dump(output_data, f, indent=2)
+            
+            if verbose:
+                print(f"✅ Validation visualization saved: {vis_output_path}")
+                print(f"✅ Validation data saved: {validation_output_path}")
+                print("🎉 Reverse validation completed successfully!")
+                print(f"📊 Average error: {comparison_results['average_error']:.2f} pixels")
+                print(f"📊 Max error: {comparison_results['max_error']:.2f} pixels")
+                if comparison_results['validation_passed']:
+                    print("✅ Validation PASSED - errors within acceptable range")
+                else:
+                    print("❌ Validation FAILED - some errors exceed threshold")
+            
+            return {
+                'success': True,
+                'validation_results': comparison_results,
+                'reverse_flow_time': reverse_flow_time,
+                'output_paths': {
+                    'visualization': vis_output_path,
+                    'validation_data': validation_output_path
+                }
+            }
+            
+        except Exception as e:
+            if verbose:
+                print(f"❌ Error during reverse validation: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def _convert_numpy_types(self, obj):
         """Convert numpy types to native Python types for JSON serialization."""
         if isinstance(obj, dict):
@@ -247,6 +370,8 @@ class KeypointTracker:
             return int(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
         else:
             return obj
 

@@ -305,8 +305,8 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Use predefined reference image and keypoints (like video_task.py)
-    ref_img_path = os.path.join(paths['test_image'], 'test_image.JPG')
-    keypoints_json_path = os.path.join(paths['test_image'], 'test_label.json')
+    ref_img_path = os.path.join(paths['test_data'], 'test_image_realtime.JPG')
+    keypoints_json_path = os.path.join(paths['test_data'], 'test_label_realtime.json')
     
     print("🚀 Initializing realtime camera flow tracker...")
     
