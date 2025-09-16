@@ -536,17 +536,104 @@ class FFPPKeypointTracker:
             raise RuntimeError(f"Direct flow computation failed: {str(e)}")
 
 
-def main():
-    """Main function to demonstrate the usage of FFppKeypointTracker with multiple reference images."""
+def test_simple():
+    """Simple test: Initialize model and test basic keypoint tracking with sample data."""
+    import cv2
+    import json
+    import numpy as np
+    import time
+    
+    print("🧪 Test Simple - Basic Functionality")
+    print("=" * 40)
+    
+    # ========================================
+    # DATA PREPARATION PHASE
+    # ========================================
+    print("📁 Loading sample data...")
+    ref_image_path = 'sample_data/flow_image_pair/ref_img.jpg'
+    comp_image_path = 'sample_data/flow_image_pair/comp_img.jpg'
+    ref_keypoints_path = 'sample_data/flow_image_pair/ref_img_keypoints.json'
+    
+    try:
+        # Load images
+        ref_img = cv2.imread(ref_image_path)
+        target_img = cv2.imread(comp_image_path)
+        
+        if ref_img is None or target_img is None:
+            print("❌ Failed to load sample images")
+            return False
+        
+        # Load keypoints - use only first 5 for simple test
+        with open(ref_keypoints_path, 'r') as f:
+            keypoints_data = json.load(f)
+        
+        # Convert to required format and use subset
+        all_keypoints = keypoints_data['keypoints']
+        test_keypoints = [
+            {'x': float(kp['x']), 'y': float(kp['y']), 'name': f"point_{i+1}"}
+            for i, kp in enumerate(all_keypoints[:5])  # Use first 5 keypoints
+        ]
+        
+        print(f"✅ Data loaded successfully:")
+        print(f"   Reference image: {ref_img.shape}")
+        print(f"   Target image: {target_img.shape}")  
+        print(f"   Test keypoints: {len(test_keypoints)} (subset of {len(all_keypoints)})")
+        
+    except Exception as e:
+        print(f"❌ Error loading sample data: {e}")
+        return False
+    
+    # ========================================
+    # FFPPKeypointTracker OPERATIONS
+    # ========================================
+    print("\n🚀 Initializing FFPPKeypointTracker...")
+    init_start_time = time.time()
+    tracker = FFPPKeypointTracker()
+    init_elapsed_time = time.time() - init_start_time
+    
+    if not tracker.model_loaded:
+        print("❌ Failed to load model")
+        return False
+    
+    print(f"✅ FFPPKeypointTracker initialized on {tracker.device}")
+    print(f"   Initialization time: {init_elapsed_time:.3f}s")
+    
+    # Test direct keypoint tracking (no reference storage)
+    print("\n🎯 Testing tracker.track_keypoints() method...")
+    print("   Mode: Direct tracking (reference_image passed as array)")
+    
+    start_time = time.time()
+    result = tracker.track_keypoints(test_keypoints, target_img, reference_image=ref_img)
+    elapsed_time = time.time() - start_time
+    
+    if result['success']:
+        tracked_count = len(result.get('tracked_keypoints', []))
+        print(f"✅ tracker.track_keypoints() successful!")
+        print(f"   Time: {elapsed_time:.3f}s")
+        print(f"   Tracked: {tracked_count} keypoints")
+        print(f"   Processing time: {result.get('total_processing_time', 0):.3f}s")
+        
+        # Show some tracking results
+        if tracked_count > 0:
+            first_kp = result['tracked_keypoints'][0]
+            print(f"   Example displacement: ({first_kp.get('displacement_x', 0):.1f}, {first_kp.get('displacement_y', 0):.1f})")
+        
+        return True
+    else:
+        print(f"❌ tracker.track_keypoints() failed: {result.get('error', 'Unknown error')}")
+        return False
+
+
+def test_ref_img():
+    """Reference image test: Full functionality with file-based data."""
     import cv2
     import time
     import json
     import os
+    import numpy as np
     
-    print("🔥 FFpp Keypoint Tracker Demo 🔥")
-    
-    # Initialize tracker
-    print("\n🚀 Initializing tracker...")
+    print("\n🧪 Test Reference Images - Full Functionality")
+    print("=" * 50)
     tracker = FFPPKeypointTracker()
     
     if not tracker.model_loaded:
@@ -556,7 +643,7 @@ def main():
     print(f"✅ Model loaded on {tracker.device}")
     
     # Load sample images and keypoints
-    print("\n� Loading sample data...")
+    print("\n📁 Loading sample data...")
     ref_image_path = 'sample_data/flow_image_pair/ref_img.jpg'
     comp_image_path = 'sample_data/flow_image_pair/comp_img.jpg'
     ref_keypoints_path = 'sample_data/flow_image_pair/ref_img_keypoints.json'
@@ -598,7 +685,7 @@ def main():
     print(f"   Default: {tracker.default_reference_key}")
     
     # Show tracking results
-    print("\n� Reference images information:")
+    print("\n📁 Reference images information:")
     print(f"📍 Reference images set: Primary key='{tracker.default_reference_key}' and secondary key='ref_offset'")
     
     # Demonstrate different tracking modes
@@ -657,6 +744,46 @@ def main():
     
     print(f"\n✅ Demo completed - {len(tracker.reference_images)} references remaining")
     print(f"   Device: {tracker.device} | Default: {tracker.default_reference_key}")
+    
+    return True
+
+
+def main():
+    """Main function - runs all tests in sequence."""
+    print("🔥 FFpp Keypoint Tracker Test Suite 🔥")
+    print("=" * 45)
+    
+    # Run test sequence
+    tests_passed = 0
+    total_tests = 2
+    
+    # Test 1: Simple functionality
+    try:
+        if test_simple():
+            tests_passed += 1
+            print("✅ test_simple PASSED")
+        else:
+            print("❌ test_simple FAILED")
+    except Exception as e:
+        print(f"❌ test_simple ERROR: {e}")
+    
+    # Test 2: Reference image functionality  
+    try:
+        if test_ref_img():
+            tests_passed += 1
+            print("✅ test_ref_img PASSED")
+        else:
+            print("❌ test_ref_img FAILED")
+    except Exception as e:
+        print(f"❌ test_ref_img ERROR: {e}")
+    
+    # Summary
+    print("\n" + "=" * 45)
+    print(f"🎯 Test Results: {tests_passed}/{total_tests} tests passed")
+    if tests_passed == total_tests:
+        print("🎉 All tests passed successfully!")
+    else:
+        print("⚠️  Some tests failed - check output above")
 
 
 if __name__ == "__main__":
