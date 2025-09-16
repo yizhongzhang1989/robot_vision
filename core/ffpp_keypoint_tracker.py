@@ -543,9 +543,9 @@ def main():
     import json
     import os
     
-    print("🔥 FFpp Keypoint Tracker Demo with Multiple Reference Images 🔥")
+    print("🔥 FFpp Keypoint Tracker Demo 🔥")
     
-    # Initialize tracker (model loads automatically)
+    # Initialize tracker
     print("\n🚀 Initializing tracker...")
     tracker = FFPPKeypointTracker()
     
@@ -553,10 +553,10 @@ def main():
         print("❌ Failed to load model. Exiting...")
         return
     
-    print(f"✅ Model loaded successfully on {tracker.device}")
+    print(f"✅ Model loaded on {tracker.device}")
     
     # Load sample images and keypoints
-    print("\n🖼️ Loading sample images...")
+    print("\n� Loading sample data...")
     ref_image_path = 'sample_data/flow_image_pair/ref_img.jpg'
     comp_image_path = 'sample_data/flow_image_pair/comp_img.jpg'
     ref_keypoints_path = 'sample_data/flow_image_pair/ref_img_keypoints.json'
@@ -587,106 +587,62 @@ def main():
         print(f"❌ Error loading sample data: {str(e)}")
         return
     
-    # Demonstrate multiple reference image functionality
-    print("\n🎯 Setting up multiple reference images...")
+    # Set up multiple reference images
+    print("\n📋 Setting up references...")
     
-    # Set first reference image with default key
-    result1 = tracker.set_reference_image(ref_image, ref_keypoints)
-    print(f"Reference 1 (default): {result1}")
+    tracker.set_reference_image(ref_image, ref_keypoints)
+    tracker.set_reference_image(ref_image_2, ref_keypoints_2, image_key="ref_offset")
+    tracker.set_reference_image(ref_image, image_key="ref_image_only")
     
-    # Set second reference image with custom key
-    result2 = tracker.set_reference_image(ref_image_2, ref_keypoints_2, image_key="ref_offset")
-    print(f"Reference 2 (custom): {result2}")
+    print(f"   References: {list(tracker.reference_images.keys())}")
+    print(f"   Default: {tracker.default_reference_key}")
     
-    # Set third reference image (image only) with another key
-    result3 = tracker.set_reference_image(ref_image, image_key="ref_image_only")
-    print(f"Reference 3 (image only): {result3}")
-    
-    # Show all reference images info
+    # Show tracking results
     print("\n� Reference images information:")
     print(f"📍 Reference images set: Primary key='{tracker.default_reference_key}' and secondary key='ref_offset'")
     
     # Demonstrate different tracking modes
-    print("\n🎯 Testing different tracking modes...")
+    print("\n🎯 Testing tracking...")
     
-    # Mode 1: Track using default reference (None)
-    print("\n1. Tracking with default reference (reference_image=None):")
-    start_time = time.time()
+    # Test default reference
     stored_keypoints = tracker.reference_keypoints[tracker.default_reference_key]
+    start_time = time.time()
     result_default = tracker.track_keypoints(stored_keypoints, comp_image, reference_image=None)
     elapsed_time = time.time() - start_time
-    print(f"   ⏱️ Time: {elapsed_time:.3f}s")
-    print(f"   Result: Success={result_default['success']}, Keypoints count={len(result_default.get('tracked_keypoints', []))}")
+    print(f"   Default: {elapsed_time:.3f}s - {len(result_default.get('tracked_keypoints', []))} points")
     
-    # Mode 2: Track using specific reference key
-    print("\n2. Tracking with specific reference key (reference_image='ref_offset'):")
-    start_time = time.time()
+    # Test specific key
     stored_keypoints_2 = tracker.reference_keypoints['ref_offset']
+    start_time = time.time()
     result_key = tracker.track_keypoints(stored_keypoints_2, comp_image, reference_image="ref_offset")
     elapsed_time = time.time() - start_time
-    print(f"   ⏱️ Time: {elapsed_time:.3f}s")
-    print(f"   Result: Success={result_key['success']}, Keypoints count={len(result_key.get('tracked_keypoints', []))}")
+    print(f"   By key: {elapsed_time:.3f}s - {len(result_key.get('tracked_keypoints', []))} points")
     
-    # Mode 3: Track using direct image array
-    print("\n3. Tracking with direct image array (reference_image=ndarray):")
+    # Test direct array
     start_time = time.time()
-    # Convert numpy keypoints to dict format for this test
     keypoints_dict_format = [{'x': float(kp[0]), 'y': float(kp[1])} for kp in ref_keypoints]
     result_direct = tracker.track_keypoints(keypoints_dict_format, comp_image, reference_image=ref_image)
     elapsed_time = time.time() - start_time
-    print(f"   ⏱️ Time: {elapsed_time:.3f}s")
-    print(f"   Result: Success={result_direct['success']}, Keypoints count={len(result_direct.get('tracked_keypoints', []))}")
+    print(f"   Direct: {elapsed_time:.3f}s - {len(result_direct.get('tracked_keypoints', []))} points")
     
-    # Test error handling
-    print("\n❌ Testing error handling:")
-    
-    # Try to use non-existent key
-    result_error = tracker.track_keypoints(stored_keypoints, comp_image, reference_image="non_existent_key")
-    print(f"   Non-existent key: {result_error.get('error', 'No error')}")
-    
-    # Test reference image removal
-    print("\n🗑️ Testing reference image removal:")
-    print(f"   Before removal: {list(tracker.reference_images.keys())}")
-    print(f"   Current default: {tracker.default_reference_key}")
-    
-    # Test removing by specific key
-    remove_result = tracker.remove_reference_image("ref_image_only")
-    print(f"   Remove by key result: {remove_result.get('success', False)} - {remove_result.get('removed_key', 'None')}")
-    print(f"   After key removal: {list(tracker.reference_images.keys())}")
-    
-    # Test removing default reference (image_key=None)
-    print(f"\n   Testing remove default (image_key=None):")
-    remove_default_result = tracker.remove_reference_image(None)  # Remove default
-    print(f"   Remove default result: {remove_default_result.get('success', False)} - {remove_default_result.get('removed_key', 'None')}")
-    print(f"   Input key was: {remove_default_result.get('input_key', 'N/A')}")
-    print(f"   After default removal: {list(tracker.reference_images.keys())}")
-    print(f"   New default: {remove_default_result.get('new_default_key', 'None')}")
+    # Test removal functionality
+    print("\n🗑️ Testing removal...")
+    print(f"   Before: {list(tracker.reference_images.keys())}")
+    tracker.remove_reference_image("ref_image_only")
+    tracker.remove_reference_image(None)  # Remove default
+    print(f"   After: {list(tracker.reference_images.keys())}")
     
     # Save results
     if result_default['success']:
-        print("\n💾 Saving tracking results...")
-        output_path = 'output/tracked_keypoints_multi_ref.json'
+        print("\n💾 Saving results...")
+        output_path = 'output/tracked_keypoints_demo.json'
         
         output_data = {
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'reference_images_count': len(tracker.reference_images),
-            'available_reference_keys': list(tracker.reference_images.keys()),
             'tracking_results': {
-                'default_reference': {
-                    'success': result_default['success'],
-                    'tracked_keypoints': result_default.get('tracked_keypoints', []),
-                    'processing_time': result_default.get('total_processing_time', 0)
-                },
-                'key_reference': {
-                    'success': result_key['success'],
-                    'tracked_keypoints': result_key.get('tracked_keypoints', []),
-                    'processing_time': result_key.get('total_processing_time', 0)
-                },
-                'direct_reference': {
-                    'success': result_direct['success'],
-                    'tracked_keypoints': result_direct.get('tracked_keypoints', []),
-                    'processing_time': result_direct.get('total_processing_time', 0)
-                }
+                'default_mode': result_default.get('tracked_keypoints', []),
+                'key_mode': result_key.get('tracked_keypoints', []),
+                'direct_mode': result_direct.get('tracked_keypoints', [])
             }
         }
         
@@ -697,22 +653,10 @@ def main():
         with open(output_path, 'w') as f:
             json.dump(output_data, f, indent=2)
         
-        print(f"✅ Results saved to: {output_path}")
+        print(f"   Saved to: {output_path}")
     
-    # Show final summary
-    print("\n🔧 Final summary:")
-    print(f"   - Device: {tracker.device}")
-    print(f"   - Reference images stored: {len(tracker.reference_images)}")
-    print(f"   - Default reference key: {tracker.default_reference_key}")
-    
-    print("\n🎉 Demo completed successfully!")
-    print(f"💡 Key features demonstrated:")
-    print(f"   - Multiple reference images with custom keys")
-    print(f"   - Three tracking modes: default, key-based, direct array")
-    print(f"   - Reference image management (add/remove with proper default handling)")
-    print(f"   - Error handling for invalid keys")
-    print(f"   - Public API: set_reference_image(), track_keypoints(), remove_reference_image()")
-    print(f"   - Comprehensive status reporting")
+    print(f"\n✅ Demo completed - {len(tracker.reference_images)} references remaining")
+    print(f"   Device: {tracker.device} | Default: {tracker.default_reference_key}")
 
 
 if __name__ == "__main__":
