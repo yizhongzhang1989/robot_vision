@@ -32,7 +32,7 @@ class FFPPKeypointTracker:
     
     Public Interface:
     - set_reference_image(image, keypoints=None, image_key=None): Store reference image with keypoints
-    - track_keypoints(keypoints, target_image, reference_image=None): Track keypoints between images
+    - track_keypoints(target_image, reference_image=None, reference_keypoints=None): Track keypoints between images
     - remove_reference_image(image_key=None): Remove a stored reference image by key (None = default)
     """
     
@@ -163,21 +163,22 @@ class FFPPKeypointTracker:
             }
 
     def track_keypoints(self, 
-                       keypoints: List[Dict], 
                        target_image: np.ndarray,
-                       reference_image: Union[None, np.ndarray, str] = None) -> Dict:
+                       reference_image: Union[None, np.ndarray, str] = None,
+                       reference_keypoints: List[Dict] = None) -> Dict:
         """Track keypoints from reference image to target image.
         
         This is the second of two main public methods. Use this to track keypoints
         from a reference image to a target image using optical flow.
         
         Args:
-            keypoints: List of keypoint dictionaries with 'x', 'y' keys.
             target_image: Target image as numpy array (H, W, 3) in RGB format.
             reference_image: Reference image specification:
                 - None: Use default reference image (key stored in default_reference_key)
                 - str: Use stored reference image with this key
                 - np.ndarray: Use this image directly (not stored)
+            reference_keypoints: List of keypoint dictionaries with 'x', 'y' keys.
+                - None: Use keypoints stored with reference image (if available)
             
         Returns:
             dict: Tracking results with success status, tracked keypoints, and statistics.
@@ -257,7 +258,7 @@ class FFPPKeypointTracker:
             
             # Track keypoints using flow
             tracked_keypoints = []
-            for kp in keypoints:
+            for kp in reference_keypoints:
                 x, y = int(round(kp['x'])), int(round(kp['y']))
                 
                 # Ensure coordinates are within flow bounds
@@ -588,7 +589,7 @@ def test_simple():
     print("   Mode: Direct tracking (reference_image passed as array)")
     
     start_time = time.time()
-    result = tracker.track_keypoints(test_keypoints, target_img, reference_image=ref_img)
+    result = tracker.track_keypoints(target_img, reference_image=ref_img, reference_keypoints=test_keypoints)
     elapsed_time = time.time() - start_time
     
     if result['success']:
@@ -734,21 +735,21 @@ def test_ref_img():
     # Test default reference
     stored_keypoints = tracker.reference_keypoints[tracker.default_reference_key]
     start_time = time.time()
-    result_default = tracker.track_keypoints(stored_keypoints, comp_image, reference_image=None)
+    result_default = tracker.track_keypoints(comp_image, reference_image=None, reference_keypoints=stored_keypoints)
     elapsed_time = time.time() - start_time
     print(f"   Default: {elapsed_time:.3f}s - {len(result_default.get('tracked_keypoints', []))} points")
     
     # Test specific key
     stored_keypoints_2 = tracker.reference_keypoints['ref_offset']
     start_time = time.time()
-    result_key = tracker.track_keypoints(stored_keypoints_2, comp_image, reference_image="ref_offset")
+    result_key = tracker.track_keypoints(comp_image, reference_image="ref_offset", reference_keypoints=stored_keypoints_2)
     elapsed_time = time.time() - start_time
     print(f"   By key: {elapsed_time:.3f}s - {len(result_key.get('tracked_keypoints', []))} points")
     
     # Test direct array
     start_time = time.time()
     keypoints_dict_format = [{'x': float(kp[0]), 'y': float(kp[1])} for kp in ref_keypoints]
-    result_direct = tracker.track_keypoints(keypoints_dict_format, comp_image, reference_image=ref_image)
+    result_direct = tracker.track_keypoints(comp_image, reference_image=ref_image, reference_keypoints=keypoints_dict_format)
     elapsed_time = time.time() - start_time
     print(f"   Direct: {elapsed_time:.3f}s - {len(result_direct.get('tracked_keypoints', []))} points")
     
