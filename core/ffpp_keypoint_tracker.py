@@ -306,43 +306,6 @@ class FFPPKeypointTracker:
                 'exception': str(e)
             }
 
-    def _bilinear_interpolate_flow(self, flow: np.ndarray, x: float, y: float) -> tuple:
-        """
-        Bilinear interpolation to sample flow at sub-pixel locations.
-        
-        Args:
-            flow: Flow field array (H, W, 2)
-            x, y: Sub-pixel coordinates to sample at
-            
-        Returns:
-            (dx, dy): Interpolated flow values
-        """
-        h, w = flow.shape[:2]
-        
-        # Clamp coordinates to valid range
-        x = max(0, min(x, w - 1))
-        y = max(0, min(y, h - 1))
-        
-        # Get integer coordinates
-        x0, y0 = int(np.floor(x)), int(np.floor(y))
-        x1, y1 = min(x0 + 1, w - 1), min(y0 + 1, h - 1)
-        
-        # Get fractional parts
-        fx, fy = x - x0, y - y0
-        
-        # Sample flow at four corners
-        flow_00 = flow[y0, x0]  # top-left
-        flow_10 = flow[y0, x1]  # top-right
-        flow_01 = flow[y1, x0]  # bottom-left
-        flow_11 = flow[y1, x1]  # bottom-right
-        
-        # Bilinear interpolation
-        flow_top = flow_00 * (1 - fx) + flow_10 * fx
-        flow_bottom = flow_01 * (1 - fx) + flow_11 * fx
-        flow_interp = flow_top * (1 - fy) + flow_bottom * fy
-        
-        return float(flow_interp[0]), float(flow_interp[1])
-
     def remove_reference_image(self, image_key: Optional[str] = None) -> Dict:
         """Remove a stored reference image by key.
         
@@ -563,6 +526,43 @@ class FFPPKeypointTracker:
             
         except Exception as e:
             raise RuntimeError(f"Direct flow computation failed: {str(e)}")
+
+    def _bilinear_interpolate_flow(self, flow: np.ndarray, x: float, y: float) -> tuple:
+        """
+        Bilinear interpolation to sample flow at sub-pixel locations.
+        
+        Args:
+            flow: Flow field array (H, W, 2)
+            x, y: Sub-pixel coordinates to sample at
+            
+        Returns:
+            (dx, dy): Interpolated flow values
+        """
+        h, w = flow.shape[:2]
+        
+        # Clamp coordinates to valid range
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
+        
+        # Get integer coordinates
+        x0, y0 = int(np.floor(x)), int(np.floor(y))
+        x1, y1 = min(x0 + 1, w - 1), min(y0 + 1, h - 1)
+        
+        # Get fractional parts
+        fx, fy = x - x0, y - y0
+        
+        # Sample flow at four corners
+        flow_00 = flow[y0, x0]  # top-left
+        flow_10 = flow[y0, x1]  # top-right
+        flow_01 = flow[y1, x0]  # bottom-left
+        flow_11 = flow[y1, x1]  # bottom-right
+        
+        # Bilinear interpolation
+        flow_top = flow_00 * (1 - fx) + flow_10 * fx
+        flow_bottom = flow_01 * (1 - fx) + flow_11 * fx
+        flow_interp = flow_top * (1 - fy) + flow_bottom * fy
+        
+        return float(flow_interp[0]), float(flow_interp[1])
 
 
 def test_simple():
