@@ -256,18 +256,20 @@ class FFPPKeypointTracker:
             start_time = time.time()
             flow, flow_stats = self._compute_flow(ref_img, target_img, return_stats=True)
             
-            # Track keypoints using flow
+            # Track keypoints using flow with bilinear interpolation
             tracked_keypoints = []
             for kp in reference_keypoints:
-                x, y = int(round(kp['x'])), int(round(kp['y']))
+                x, y = kp['x'], kp['y']
                 
                 # Ensure coordinates are within flow bounds
                 h, w = flow.shape[:2]
-                x = max(0, min(x, w - 1))
-                y = max(0, min(y, h - 1))
+                if x < 0 or x >= w or y < 0 or y >= h:
+                    # Handle out-of-bounds points by clamping
+                    x = max(0, min(x, w - 1))
+                    y = max(0, min(y, h - 1))
                 
-                # Get flow at keypoint location
-                dx, dy = flow[y, x]
+                # Get flow at keypoint location using bilinear interpolation
+                dx, dy = self._bilinear_interpolate_flow(flow, x, y)
                 
                 # Calculate new position
                 new_x = kp['x'] + dx
@@ -303,6 +305,43 @@ class FFPPKeypointTracker:
                 'error': f'Keypoint tracking failed: {str(e)}',
                 'exception': str(e)
             }
+
+    def _bilinear_interpolate_flow(self, flow: np.ndarray, x: float, y: float) -> tuple:
+        """
+        Bilinear interpolation to sample flow at sub-pixel locations.
+        
+        Args:
+            flow: Flow field array (H, W, 2)
+            x, y: Sub-pixel coordinates to sample at
+            
+        Returns:
+            (dx, dy): Interpolated flow values
+        """
+        h, w = flow.shape[:2]
+        
+        # Clamp coordinates to valid range
+        x = max(0, min(x, w - 1))
+        y = max(0, min(y, h - 1))
+        
+        # Get integer coordinates
+        x0, y0 = int(np.floor(x)), int(np.floor(y))
+        x1, y1 = min(x0 + 1, w - 1), min(y0 + 1, h - 1)
+        
+        # Get fractional parts
+        fx, fy = x - x0, y - y0
+        
+        # Sample flow at four corners
+        flow_00 = flow[y0, x0]  # top-left
+        flow_10 = flow[y0, x1]  # top-right
+        flow_01 = flow[y1, x0]  # bottom-left
+        flow_11 = flow[y1, x1]  # bottom-right
+        
+        # Bilinear interpolation
+        flow_top = flow_00 * (1 - fx) + flow_10 * fx
+        flow_bottom = flow_01 * (1 - fx) + flow_11 * fx
+        flow_interp = flow_top * (1 - fy) + flow_bottom * fy
+        
+        return float(flow_interp[0]), float(flow_interp[1])
 
     def remove_reference_image(self, image_key: Optional[str] = None) -> Dict:
         """Remove a stored reference image by key.
