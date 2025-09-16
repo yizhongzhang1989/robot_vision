@@ -23,6 +23,156 @@ except ImportError:
     pass
 
 
+def regularize_image_and_keypoints(image: np.ndarray, 
+                                 keypoints: Optional[List[Union[Dict, List]]] = None,
+                                 max_image_size: int = 1024) -> Tuple[np.ndarray, Optional[List]]:
+    """
+    Standalone function to regularize image and keypoints for FlowFormer++ processing.
+    
+    Applies the following constraints:
+    1. Maximum image dimension should not exceed max_image_size
+    2. Both width and height should be divisible by 8
+    3. Keypoint coordinates are scaled proportionally if image is resized
+    
+    Args:
+        image: Input image as numpy array (H, W, 3)
+        keypoints: Optional list of keypoints in either format:
+                  - Dict format: [{'x': x, 'y': y}, ...]
+                  - List format: [[x, y], ...]
+        max_image_size: Maximum allowed dimension for regularization
+        
+    Returns:
+        tuple: (processed_image, scaled_keypoints)
+            - processed_image: Resized image meeting constraints
+            - scaled_keypoints: Keypoints with coordinates adjusted for scaling (None if input was None)
+            
+    Note:
+        Scale factors can be calculated as:
+        original_h, original_w = image.shape[:2]
+        processed_h, processed_w = processed_image.shape[:2]
+        scale_w, scale_h = processed_w / original_w, processed_h / original_h
+    """
+    import cv2
+    
+    # Store original dimensions
+    original_h, original_w = image.shape[:2]
+    
+    # Calculate target dimensions
+    h, w = original_h, original_w
+    
+    # Scale down if image is too large
+    if max(h, w) > max_image_size:
+        scale = max_image_size / max(h, w)
+        h, w = int(h * scale), int(w * scale)
+    
+    # Ensure dimensions are divisible by 8 (required by FlowFormer++)
+    h = (h // 8) * 8
+    w = (w // 8) * 8
+    
+    # Calculate scale factors for internal use
+    scale_factors = (w / original_w, h / original_h)  # (scale_w, scale_h)
+    
+    # Resize image if necessary
+    if (h, w) != (original_h, original_w):
+        processed_image = cv2.resize(image, (w, h), interpolation=cv2.INTER_CUBIC)
+        
+        # Scale keypoints if provided
+        scaled_keypoints = None
+        if keypoints is not None:
+            scaled_keypoints = []
+            for kp in keypoints:
+                if isinstance(kp, dict):
+                    # Dictionary format with 'x', 'y' keys
+                    scaled_kp = kp.copy()
+                    scaled_kp['x'] = kp['x'] * scale_factors[0]
+                    scaled_kp['y'] = kp['y'] * scale_factors[1]
+                    scaled_keypoints.append(scaled_kp)
+                else:
+                    # List format [x, y]
+                    scaled_kp = [kp[0] * scale_factors[0], kp[1] * scale_factors[1]]
+                    scaled_keypoints.append(scaled_kp)
+    else:
+        # No scaling needed
+        processed_image = image.copy()
+        scaled_keypoints = keypoints.copy() if keypoints is not None else None
+    
+    return processed_image, scaled_keypoints
+
+
+class ReferenceImageData:
+    """Container for reference image data with all associated metadata."""
+    
+    def __init__(self, 
+                 original_image: np.ndarray, 
+                 original_keypoints: Optional[List[Dict]] = None,
+                 max_image_size: int = 1024):
+        """Initialize reference image data with regularization.
+        
+        Args:
+            original_image: Original input image (H, W, 3)
+            original_keypoints: Original keypoints (list of dicts with 'x', 'y' keys)
+            max_image_size: Maximum allowed dimension for regularization
+        """
+        # Store original data
+        self.original_image = original_image.copy()
+        self.original_keypoints = original_keypoints.copy() if original_keypoints else []
+        self.original_size = original_image.shape[:2]  # (height, width)
+        
+        # Regularize for FlowFormer++ processing
+        self._regularize_data(max_image_size)
+    
+    def _regularize_data(self, max_image_size: int):
+        """Apply regularization constraints to image and keypoints using the standalone function."""
+        (self.processed_image, 
+         self.processed_keypoints) = regularize_image_and_keypoints(
+             self.original_image, 
+             self.original_keypoints, 
+             max_image_size
+         )
+        
+        # Calculate sizes and scale factors from the images directly
+        self.processed_size = self.processed_image.shape[:2]  # (height, width)
+        
+        # Calculate scale factors: processed / original
+        self.scale_factors = (
+            self.processed_size[1] / self.original_size[1],  # width_scale
+            self.processed_size[0] / self.original_size[0]   # height_scale
+        )
+    
+    @property
+    def was_regularized(self) -> bool:
+        """Check if regularization was applied."""
+        return self.processed_size != self.original_size
+    
+    @property
+    def scale_factor(self) -> Tuple[float, float]:
+        """Get scale factors as (width_scale, height_scale)."""
+        return self.scale_factors
+    
+    @property
+    def width_scale(self) -> float:
+        """Get width scale factor."""
+        return self.scale_factors[0]
+    
+    @property
+    def height_scale(self) -> float:
+        """Get height scale factor."""
+        return self.scale_factors[1]
+    
+    def get_summary(self) -> Dict:
+        """Get summary information about this reference image."""
+        return {
+            'original_shape': self.original_size + (3,),
+            'processed_shape': self.processed_size + (3,),
+            'scale_factors': {
+                'width_scale': self.width_scale,
+                'height_scale': self.height_scale
+            },
+            'keypoints_count': len(self.processed_keypoints),
+            'regularization_applied': self.was_regularized
+        }
+
+
 class FFPPKeypointTracker:
     """FlowFormer++ based keypoint tracker with direct model loading.
     
@@ -39,12 +189,14 @@ class FFPPKeypointTracker:
     def __init__(self, 
                  model_path: Optional[str] = None,
                  device: str = 'auto',
+                 max_image_size: Optional[int] = None,
                  config: Optional[Dict] = None):
         """Initialize the FFPP keypoint tracker.
         
         Args:
             model_path: Path to FlowFormer++ checkpoint. If None, uses 'sintel.pth'.
             device: Device to run inference on ('cpu', 'cuda', 'auto').
+            max_image_size: Maximum image size for processing. If None, uses config default.
             config: Configuration dictionary for processing parameters.
         """
         # Get project paths
@@ -58,7 +210,7 @@ class FFPPKeypointTracker:
                 'project_root': project_root,
                 'thirdparty': os.path.join(project_root, 'ThirdParty')
             }
-        self.config = self._load_config(config)
+        self.config = self._load_config(config, max_image_size)
         
         # Model state
         self.model = None
@@ -66,8 +218,7 @@ class FFPPKeypointTracker:
         self.model_loaded = False
         
         # Reference image state - support multiple reference images with keys
-        self.reference_images = {}  # Dict[str, np.ndarray] - key -> image
-        self.reference_keypoints = {}  # Dict[str, List[Dict]] - key -> keypoints
+        self.reference_data = {}  # Dict[str, ReferenceImageData] - key -> reference data
         self.default_reference_key = None  # Key for default reference when None is passed
         
         # Processing state
@@ -120,39 +271,49 @@ class FFPPKeypointTracker:
                 image_key = 'default'
                 self.default_reference_key = image_key
             
-            # Store reference image
-            self.reference_images[image_key] = image.copy()
-            
             # Handle keypoints - convert numpy array to list format if needed
+            processed_keypoints = None
             if keypoints is not None:
                 if isinstance(keypoints, np.ndarray):
                     # Convert numpy array to list of dict format
-                    keypoints = [{'x': float(kp[0]), 'y': float(kp[1])} for kp in keypoints]
-                elif not isinstance(keypoints, list):
+                    processed_keypoints = [{'x': float(kp[0]), 'y': float(kp[1])} for kp in keypoints]
+                elif isinstance(keypoints, list):
+                    processed_keypoints = keypoints
+                else:
                     return {
                         'success': False,
                         'error': f'Keypoints must be list or numpy array, got {type(keypoints)}',
                         'keypoints_type': str(type(keypoints))
                     }
-            else:
-                keypoints = []
             
-            # Store keypoints
-            self.reference_keypoints[image_key] = keypoints
+            # Create ReferenceImageData object (handles regularization automatically)
+            ref_data = ReferenceImageData(
+                original_image=image,
+                original_keypoints=processed_keypoints,
+                max_image_size=self.config.get('max_image_size', 1024)
+            )
+            
+            # Store reference data
+            self.reference_data[image_key] = ref_data
             
             # Set as default if it's the first reference or explicitly default
             if self.default_reference_key is None or image_key == 'default':
                 self.default_reference_key = image_key
             
-            # Return success information
+            # Return success information using the reference data
+            summary = ref_data.get_summary()
             return {
                 'success': True,
                 'key': image_key,
-                'image_shape': image.shape,
-                'keypoints_count': len(self.reference_keypoints[image_key]),
-                'keypoints': self.reference_keypoints[image_key],
+                'original_image_shape': summary['original_shape'],
+                'regularized_image_shape': summary['processed_shape'],
+                'scale_factors': summary['scale_factors'],
+                'keypoints_count': summary['keypoints_count'],
+                'original_keypoints': ref_data.original_keypoints,
+                'regularized_keypoints': ref_data.processed_keypoints,
                 'is_default': image_key == self.default_reference_key,
-                'total_reference_images': len(self.reference_images)
+                'total_reference_images': len(self.reference_data),
+                'regularization_applied': summary['regularization_applied']
             }
             
         except Exception as e:
@@ -197,23 +358,23 @@ class FFPPKeypointTracker:
                 
             elif isinstance(reference_image, str):
                 # Use stored reference image with specified key
-                if reference_image not in self.reference_images:
+                if reference_image not in self.reference_data:
                     return {
                         'success': False,
-                        'error': f'Reference image with key "{reference_image}" not found. Available keys: {list(self.reference_images.keys())}'
+                        'error': f'Reference image with key "{reference_image}" not found. Available keys: {list(self.reference_data.keys())}'
                     }
-                ref_img = self.reference_images[reference_image].copy()
+                ref_img = self.reference_data[reference_image].processed_image.copy()
                 image_source = 'stored_by_key'
                 reference_key = reference_image
                 
             elif reference_image is None:
                 # Use default reference image
-                if self.default_reference_key is None or self.default_reference_key not in self.reference_images:
+                if self.default_reference_key is None or self.default_reference_key not in self.reference_data:
                     return {
                         'success': False,
-                        'error': f'No default reference image available. Available keys: {list(self.reference_images.keys())}. Use set_reference_image() first or provide a reference_image parameter.'
+                        'error': f'No default reference image available. Available keys: {list(self.reference_data.keys())}. Use set_reference_image() first or provide a reference_image parameter.'
                     }
-                ref_img = self.reference_images[self.default_reference_key].copy()
+                ref_img = self.reference_data[self.default_reference_key].processed_image.copy()
                 image_source = 'default_stored'
                 reference_key = self.default_reference_key
                 
@@ -295,7 +456,7 @@ class FFPPKeypointTracker:
                 'target_image_shape': target_img.shape,
                 'flow_shape': flow.shape,
                 'keypoints_count': len(tracked_keypoints),
-                'available_reference_keys': list(self.reference_images.keys()),
+                'available_reference_keys': list(self.reference_data.keys()),
                 'default_reference_key': self.default_reference_key
             }
             
@@ -327,22 +488,20 @@ class FFPPKeypointTracker:
                     }
                 key_to_remove = self.default_reference_key
             
-            if key_to_remove not in self.reference_images:
+            if key_to_remove not in self.reference_data:
                 return {
                     'success': False,
-                    'error': f'Reference image with key "{key_to_remove}" not found. Available keys: {list(self.reference_images.keys())}'
+                    'error': f'Reference image with key "{key_to_remove}" not found. Available keys: {list(self.reference_data.keys())}'
                 }
             
-            # Remove the reference image and keypoints
-            del self.reference_images[key_to_remove]
-            if key_to_remove in self.reference_keypoints:
-                del self.reference_keypoints[key_to_remove]
+            # Remove the reference data
+            del self.reference_data[key_to_remove]
             
             # Update default key if necessary
             if self.default_reference_key == key_to_remove:
-                if self.reference_images:
+                if self.reference_data:
                     # Set first available as new default
-                    self.default_reference_key = list(self.reference_images.keys())[0]
+                    self.default_reference_key = list(self.reference_data.keys())[0]
                 else:
                     self.default_reference_key = None
             
@@ -351,8 +510,8 @@ class FFPPKeypointTracker:
                 'removed_key': key_to_remove,
                 'input_key': image_key,  # Show what was actually passed in
                 'new_default_key': self.default_reference_key,
-                'remaining_keys': list(self.reference_images.keys()),
-                'remaining_count': len(self.reference_images)
+                'remaining_keys': list(self.reference_data.keys()),
+                'remaining_count': len(self.reference_data)
             }
             
         except Exception as e:
@@ -366,7 +525,7 @@ class FFPPKeypointTracker:
     # PRIVATE METHODS
     # ============================================================================
 
-    def _load_config(self, config: Optional[Dict]) -> Dict:
+    def _load_config(self, config: Optional[Dict], max_image_size: Optional[int] = None) -> Dict:
         """Load configuration with defaults."""
         default_config = {
             'max_image_size': 1024,
@@ -383,6 +542,10 @@ class FFPPKeypointTracker:
         if config:
             # Merge user config with defaults
             default_config.update(config)
+        
+        # Override max_image_size if explicitly provided
+        if max_image_size is not None:
+            default_config['max_image_size'] = max_image_size
         
         return default_config
     
@@ -751,7 +914,7 @@ def test_ref_img():
     tracker.set_reference_image(ref_image_2, ref_keypoints_2, image_key="ref_offset")
     tracker.set_reference_image(ref_image, image_key="ref_image_only")
     
-    print(f"   References: {list(tracker.reference_images.keys())}")
+    print(f"   References: {list(tracker.reference_data.keys())}")
     print(f"   Default: {tracker.default_reference_key}")
     
     # Show tracking results
@@ -762,14 +925,14 @@ def test_ref_img():
     print("\n🎯 Testing tracking...")
     
     # Test default reference
-    stored_keypoints = tracker.reference_keypoints[tracker.default_reference_key]
+    stored_keypoints = tracker.reference_data[tracker.default_reference_key].processed_keypoints
     start_time = time.time()
     result_default = tracker.track_keypoints(comp_image, reference_image=None, reference_keypoints=stored_keypoints)
     elapsed_time = time.time() - start_time
     print(f"   Default: {elapsed_time:.3f}s - {len(result_default.get('tracked_keypoints', []))} points")
     
     # Test specific key
-    stored_keypoints_2 = tracker.reference_keypoints['ref_offset']
+    stored_keypoints_2 = tracker.reference_data['ref_offset'].processed_keypoints
     start_time = time.time()
     result_key = tracker.track_keypoints(comp_image, reference_image="ref_offset", reference_keypoints=stored_keypoints_2)
     elapsed_time = time.time() - start_time
@@ -784,10 +947,10 @@ def test_ref_img():
     
     # Test removal functionality
     print("\n🗑️ Testing removal...")
-    print(f"   Before: {list(tracker.reference_images.keys())}")
+    print(f"   Before: {list(tracker.reference_data.keys())}")
     tracker.remove_reference_image("ref_image_only")
     tracker.remove_reference_image(None)  # Remove default
-    print(f"   After: {list(tracker.reference_images.keys())}")
+    print(f"   After: {list(tracker.reference_data.keys())}")
     
     # Save results
     if result_default['success']:
@@ -812,7 +975,7 @@ def test_ref_img():
         
         print(f"   Saved to: {output_path}")
     
-    print(f"\n✅ Demo completed - {len(tracker.reference_images)} references remaining")
+    print(f"\n✅ Demo completed - {len(tracker.reference_data)} references remaining")
     print(f"   Device: {tracker.device} | Default: {tracker.default_reference_key}")
     
     return True
