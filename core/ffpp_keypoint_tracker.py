@@ -29,6 +29,11 @@ class FFPPKeypointTracker:
     This class provides keypoint tracking functionality by loading the FlowFormer++
     model directly, eliminating the need for a separate server. It uses the same
     model loading approach as the FlowFormerPlusPlusServer.
+    
+    Public Interface:
+    - set_reference_image(image, keypoints=None, image_key=None): Store reference image with keypoints
+    - track_keypoints(keypoints, target_image, reference_image=None): Track keypoints between images
+    - remove_reference_image(image_key=None): Remove a stored reference image by key (None = default)
     """
     
     def __init__(self, 
@@ -72,11 +77,18 @@ class FFPPKeypointTracker:
         # Initialize model loading
         self._initialize_model(model_path, device)
 
+    # ============================================================================
+    # PUBLIC INTERFACE
+    # ============================================================================
+
     def set_reference_image(self, 
                           image: np.ndarray, 
                           keypoints: Optional[List[Dict]] = None,
                           image_key: Optional[str] = None) -> Dict:
         """Set reference image for keypoint tracking with optional image key.
+        
+        This is the first of two main public methods. Use this to store reference 
+        images with their associated keypoints for later tracking operations.
         
         Args:
             image: Reference image as numpy array (H, W, 3) in RGB format.
@@ -85,7 +97,7 @@ class FFPPKeypointTracker:
                        If None, uses 'default' and sets as default reference.
             
         Returns:
-            Dict with status and information about the set reference image.
+            Dict with success status and information about the set reference image.
         """
         try:
             # Validate image
@@ -149,7 +161,219 @@ class FFPPKeypointTracker:
                 'error': f'Failed to set reference image: {str(e)}',
                 'exception': str(e)
             }
-    
+
+    def track_keypoints(self, 
+                       keypoints: List[Dict], 
+                       target_image: np.ndarray,
+                       reference_image: Union[None, np.ndarray, str] = None) -> Dict:
+        """Track keypoints from reference image to target image.
+        
+        This is the second of two main public methods. Use this to track keypoints
+        from a reference image to a target image using optical flow.
+        
+        Args:
+            keypoints: List of keypoint dictionaries with 'x', 'y' keys.
+            target_image: Target image as numpy array (H, W, 3) in RGB format.
+            reference_image: Reference image specification:
+                - None: Use default reference image (key stored in default_reference_key)
+                - str: Use stored reference image with this key
+                - np.ndarray: Use this image directly (not stored)
+            
+        Returns:
+            dict: Tracking results with success status, tracked keypoints, and statistics.
+        """
+        try:
+            # Determine reference image to use
+            ref_img = None
+            image_source = None
+            reference_key = None
+            
+            if isinstance(reference_image, np.ndarray):
+                # Use provided numpy array directly
+                ref_img = reference_image.copy()
+                image_source = 'provided_array'
+                reference_key = 'provided_array'
+                
+            elif isinstance(reference_image, str):
+                # Use stored reference image with specified key
+                if reference_image not in self.reference_images:
+                    return {
+                        'success': False,
+                        'error': f'Reference image with key "{reference_image}" not found. Available keys: {list(self.reference_images.keys())}'
+                    }
+                ref_img = self.reference_images[reference_image].copy()
+                image_source = 'stored_by_key'
+                reference_key = reference_image
+                
+            elif reference_image is None:
+                # Use default reference image
+                if self.default_reference_key is None or self.default_reference_key not in self.reference_images:
+                    return {
+                        'success': False,
+                        'error': f'No default reference image available. Available keys: {list(self.reference_images.keys())}. Use set_reference_image() first or provide a reference_image parameter.'
+                    }
+                ref_img = self.reference_images[self.default_reference_key].copy()
+                image_source = 'default_stored'
+                reference_key = self.default_reference_key
+                
+            else:
+                return {
+                    'success': False,
+                    'error': f'Invalid reference_image type: {type(reference_image)}. Must be None, str, or np.ndarray.'
+                }
+            
+            # Validate target image
+            if not isinstance(target_image, np.ndarray):
+                return {
+                    'success': False,
+                    'error': f'Target image must be numpy array, got {type(target_image)}'
+                }
+            
+            target_img = target_image.copy()
+            
+            # Validate image dimensions
+            if len(ref_img.shape) != 3 or ref_img.shape[2] != 3:
+                return {
+                    'success': False,
+                    'error': f'Reference image must be RGB format (H, W, 3), got {ref_img.shape}'
+                }
+                
+            if len(target_img.shape) != 3 or target_img.shape[2] != 3:
+                return {
+                    'success': False,
+                    'error': f'Target image must be RGB format (H, W, 3), got {target_img.shape}'
+                }
+            
+            # Check if images have same dimensions
+            if ref_img.shape != target_img.shape:
+                return {
+                    'success': False,
+                    'error': f'Image dimension mismatch: Reference is {ref_img.shape}, target is {target_img.shape}'
+                }
+            
+            # Compute optical flow
+            start_time = time.time()
+            flow, flow_stats = self._compute_flow(ref_img, target_img, return_stats=True)
+            
+            # Track keypoints using flow
+            tracked_keypoints = []
+            for kp in keypoints:
+                x, y = int(round(kp['x'])), int(round(kp['y']))
+                
+                # Ensure coordinates are within flow bounds
+                h, w = flow.shape[:2]
+                x = max(0, min(x, w - 1))
+                y = max(0, min(y, h - 1))
+                
+                # Get flow at keypoint location
+                dx, dy = flow[y, x]
+                
+                # Calculate new position
+                new_x = kp['x'] + dx
+                new_y = kp['y'] + dy
+                
+                tracked_kp = {
+                    'name': kp.get('name', f"keypoint_{kp.get('id', len(tracked_keypoints) + 1)}"),
+                    'original_x': float(kp['x']),
+                    'original_y': float(kp['y']),
+                    'tracked_x': float(new_x),
+                    'tracked_y': float(new_y),
+                    'displacement_x': float(dx),
+                    'displacement_y': float(dy),
+                    'displacement_magnitude': float(np.sqrt(dx**2 + dy**2))
+                }
+                
+                # Include original keypoint data if present
+                for key, value in kp.items():
+                    if key not in ['x', 'y'] and key not in tracked_kp:
+                        tracked_kp[key] = value
+                
+                tracked_keypoints.append(tracked_kp)
+            
+            total_time = time.time() - start_time
+            
+            return {
+                'success': True,
+                'tracked_keypoints': tracked_keypoints,
+                'flow_computation_time': flow_stats['processing_time'],
+                'total_processing_time': total_time,
+                'reference_image_source': image_source,
+                'reference_key': reference_key,
+                'reference_image_shape': ref_img.shape,
+                'target_image_shape': target_img.shape,
+                'flow_shape': flow.shape,
+                'keypoints_count': len(tracked_keypoints),
+                'available_reference_keys': list(self.reference_images.keys()),
+                'default_reference_key': self.default_reference_key
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Keypoint tracking failed: {str(e)}',
+                'exception': str(e)
+            }
+
+    def remove_reference_image(self, image_key: Optional[str] = None) -> Dict:
+        """Remove a stored reference image by key.
+        
+        Args:
+            image_key: Key of the reference image to remove. If None, removes the default reference image.
+            
+        Returns:
+            Dict with success status and information.
+        """
+        try:
+            # Determine which key to remove
+            key_to_remove = image_key
+            if key_to_remove is None:
+                # Use default reference key
+                if self.default_reference_key is None:
+                    return {
+                        'success': False,
+                        'error': 'No default reference image to remove. No reference images are currently stored.'
+                    }
+                key_to_remove = self.default_reference_key
+            
+            if key_to_remove not in self.reference_images:
+                return {
+                    'success': False,
+                    'error': f'Reference image with key "{key_to_remove}" not found. Available keys: {list(self.reference_images.keys())}'
+                }
+            
+            # Remove the reference image and keypoints
+            del self.reference_images[key_to_remove]
+            if key_to_remove in self.reference_keypoints:
+                del self.reference_keypoints[key_to_remove]
+            
+            # Update default key if necessary
+            if self.default_reference_key == key_to_remove:
+                if self.reference_images:
+                    # Set first available as new default
+                    self.default_reference_key = list(self.reference_images.keys())[0]
+                else:
+                    self.default_reference_key = None
+            
+            return {
+                'success': True,
+                'removed_key': key_to_remove,
+                'input_key': image_key,  # Show what was actually passed in
+                'new_default_key': self.default_reference_key,
+                'remaining_keys': list(self.reference_images.keys()),
+                'remaining_count': len(self.reference_images)
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Failed to remove reference image: {str(e)}',
+                'exception': str(e)
+            }
+
+    # ============================================================================
+    # PRIVATE METHODS
+    # ============================================================================
+
     def _load_config(self, config: Optional[Dict]) -> Dict:
         """Load configuration with defaults."""
         default_config = {
@@ -225,7 +449,7 @@ class FFPPKeypointTracker:
             print("💡 Make sure you're running in the 'flowformerpp' conda environment")
             raise
     
-    def compute_flow(self, 
+    def _compute_flow(self, 
                      image1: np.ndarray, 
                      image2: np.ndarray,
                      return_stats: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, Dict]]:
@@ -310,300 +534,6 @@ class FFPPKeypointTracker:
             
         except Exception as e:
             raise RuntimeError(f"Direct flow computation failed: {str(e)}")
-    
-    def track_keypoints_with_flow(self, keypoints: List[Dict], flow: np.ndarray) -> List[Dict]:
-        """Track keypoints using precomputed optical flow.
-        
-        Args:
-            keypoints: List of keypoint dictionaries with 'x', 'y', 'name' keys.
-            flow: Optical flow array (H, W, 2).
-            
-        Returns:
-            List of tracked keypoint dictionaries.
-        """
-        tracked_keypoints = []
-        
-        for i, kp in enumerate(keypoints):
-            x, y = int(kp['x']), int(kp['y'])
-            
-            # Ensure coordinates are within flow bounds
-            h, w = flow.shape[:2]
-            x = max(0, min(x, w - 1))
-            y = max(0, min(y, h - 1))
-            
-            # Get flow at keypoint location
-            dx, dy = flow[y, x]
-            
-            # Calculate new position
-            new_x = x + dx
-            new_y = y + dy
-            
-            tracked_kp = {
-                'name': kp.get('name', f'point_{i+1}'),
-                'x': float(new_x),
-                'y': float(new_y),
-                'original_x': float(kp['x']),
-                'original_y': float(kp['y']),
-                'displacement': float(np.sqrt(dx**2 + dy**2))
-            }
-            
-            tracked_keypoints.append(tracked_kp)
-        
-        return tracked_keypoints
-    
-    def track_keypoints(self, 
-                       keypoints: List[Dict], 
-                       target_image: np.ndarray,
-                       reference_image: Union[None, np.ndarray, str] = None) -> Dict:
-        """Track keypoints from reference image to target image.
-        
-        Args:
-            keypoints: List of keypoint dictionaries with 'x', 'y', 'name' keys.
-            target_image: Target image as numpy array (H, W, 3) in RGB format.
-            reference_image: Reference image specification:
-                - None: Use default reference image (key stored in default_reference_key)
-                - str: Use stored reference image with this key
-                - np.ndarray: Use this image directly (not stored)
-            
-        Returns:
-            dict: Tracking results with success status, tracked keypoints, and statistics.
-        """
-        try:
-            # Determine reference image to use
-            ref_img = None
-            image_source = None
-            reference_key = None
-            
-            if isinstance(reference_image, np.ndarray):
-                # Use provided numpy array directly
-                ref_img = reference_image.copy()
-                image_source = 'provided_array'
-                reference_key = 'provided_array'
-                
-            elif isinstance(reference_image, str):
-                # Use stored reference image with specified key
-                if reference_image not in self.reference_images:
-                    return {
-                        'success': False,
-                        'error': f'Reference image with key "{reference_image}" not found. Available keys: {list(self.reference_images.keys())}'
-                    }
-                ref_img = self.reference_images[reference_image].copy()
-                image_source = 'stored_by_key'
-                reference_key = reference_image
-                
-            elif reference_image is None:
-                # Use default reference image
-                if self.default_reference_key is None or self.default_reference_key not in self.reference_images:
-                    return {
-                        'success': False,
-                        'error': f'No default reference image available. Available keys: {list(self.reference_images.keys())}. Use set_reference_image() first or provide a reference_image parameter.'
-                    }
-                ref_img = self.reference_images[self.default_reference_key].copy()
-                image_source = 'default_stored'
-                reference_key = self.default_reference_key
-                
-            else:
-                return {
-                    'success': False,
-                    'error': f'Invalid reference_image type: {type(reference_image)}. Must be None, str, or np.ndarray.'
-                }
-            
-            # Validate target image
-            if not isinstance(target_image, np.ndarray):
-                return {
-                    'success': False,
-                    'error': f'Target image must be numpy array, got {type(target_image)}'
-                }
-            
-            target_img = target_image.copy()
-            
-            # Validate image dimensions
-            if len(ref_img.shape) != 3 or ref_img.shape[2] != 3:
-                return {
-                    'success': False,
-                    'error': f'Reference image must be RGB format (H, W, 3), got {ref_img.shape}'
-                }
-                
-            if len(target_img.shape) != 3 or target_img.shape[2] != 3:
-                return {
-                    'success': False,
-                    'error': f'Target image must be RGB format (H, W, 3), got {target_img.shape}'
-                }
-            
-            # Check if images have same dimensions
-            if ref_img.shape != target_img.shape:
-                return {
-                    'success': False,
-                    'error': f'Image dimension mismatch: Reference is {ref_img.shape}, target is {target_img.shape}'
-                }
-            
-            # Compute optical flow
-            start_time = time.time()
-            flow, flow_stats = self.compute_flow(ref_img, target_img, return_stats=True)
-            
-            # Track keypoints using flow
-            tracked_keypoints = []
-            for kp in keypoints:
-                x, y = int(round(kp['x'])), int(round(kp['y']))
-                
-                # Ensure coordinates are within flow bounds
-                h, w = flow.shape[:2]
-                x = max(0, min(x, w - 1))
-                y = max(0, min(y, h - 1))
-                
-                # Get flow at keypoint location
-                dx, dy = flow[y, x]
-                
-                # Calculate new position
-                new_x = kp['x'] + dx
-                new_y = kp['y'] + dy
-                
-                tracked_kp = {
-                    'name': kp.get('name', f"keypoint_{kp.get('id', len(tracked_keypoints) + 1)}"),
-                    'original_x': float(kp['x']),
-                    'original_y': float(kp['y']),
-                    'tracked_x': float(new_x),
-                    'tracked_y': float(new_y),
-                    'displacement_x': float(dx),
-                    'displacement_y': float(dy),
-                    'displacement_magnitude': float(np.sqrt(dx**2 + dy**2))
-                }
-                
-                # Include original keypoint data if present
-                for key, value in kp.items():
-                    if key not in ['x', 'y'] and key not in tracked_kp:
-                        tracked_kp[key] = value
-                
-                tracked_keypoints.append(tracked_kp)
-            
-            total_time = time.time() - start_time
-            
-            return {
-                'success': True,
-                'tracked_keypoints': tracked_keypoints,
-                'flow_computation_time': flow_stats['processing_time'],
-                'total_processing_time': total_time,
-                'reference_image_source': image_source,
-                'reference_key': reference_key,
-                'reference_image_shape': ref_img.shape,
-                'target_image_shape': target_img.shape,
-                'flow_shape': flow.shape,
-                'keypoints_count': len(tracked_keypoints),
-                'available_reference_keys': list(self.reference_images.keys()),
-                'default_reference_key': self.default_reference_key
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Keypoint tracking failed: {str(e)}',
-                'exception': str(e)
-            }
-    
-    def get_model_info(self) -> Dict:
-        """Get information about the loaded model."""
-        return {
-            'model_loaded': self.model_loaded,
-            'device': str(self.device),
-            'config': self.config,
-            'last_processing_stats': self.processing_stats
-        }
-
-    def get_reference_images_info(self) -> Dict:
-        """Get information about stored reference images."""
-        return {
-            'reference_keys': list(self.reference_images.keys()),
-            'default_reference_key': self.default_reference_key,
-            'total_count': len(self.reference_images),
-            'images_info': {
-                key: {
-                    'shape': img.shape,
-                    'keypoints_count': len(self.reference_keypoints.get(key, []))
-                }
-                for key, img in self.reference_images.items()
-            }
-        }
-
-    def remove_reference_image(self, key: str) -> Dict:
-        """Remove a stored reference image by key.
-        
-        Args:
-            key: Key of the reference image to remove.
-            
-        Returns:
-            Dict with success status and information.
-        """
-        try:
-            if key not in self.reference_images:
-                return {
-                    'success': False,
-                    'error': f'Reference image with key "{key}" not found. Available keys: {list(self.reference_images.keys())}'
-                }
-            
-            # Remove the reference image and keypoints
-            del self.reference_images[key]
-            if key in self.reference_keypoints:
-                del self.reference_keypoints[key]
-            
-            # Update default key if necessary
-            if self.default_reference_key == key:
-                if self.reference_images:
-                    # Set first available as new default
-                    self.default_reference_key = list(self.reference_images.keys())[0]
-                else:
-                    self.default_reference_key = None
-            
-            return {
-                'success': True,
-                'removed_key': key,
-                'new_default_key': self.default_reference_key,
-                'remaining_keys': list(self.reference_images.keys()),
-                'remaining_count': len(self.reference_images)
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Failed to remove reference image: {str(e)}',
-                'exception': str(e)
-            }
-
-    def clear_all_reference_images(self) -> Dict:
-        """Clear all stored reference images.
-        
-        Returns:
-            Dict with success status and information.
-        """
-        try:
-            removed_count = len(self.reference_images)
-            removed_keys = list(self.reference_images.keys())
-            
-            self.reference_images.clear()
-            self.reference_keypoints.clear()
-            self.default_reference_key = None
-            
-            return {
-                'success': True,
-                'removed_count': removed_count,
-                'removed_keys': removed_keys
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': f'Failed to clear reference images: {str(e)}',
-                'exception': str(e)
-            }
-    
-    def clear_cache(self):
-        """Clear model caches to free memory."""
-        # Note: Model caching is handled by the subprocess approach
-        self.last_flow = None
-        self.processing_stats = {}
-    
-    def __del__(self):
-        """Cleanup resources."""
-        self.clear_cache()
 
 
 def main():
@@ -624,10 +554,6 @@ def main():
         return
     
     print(f"✅ Model loaded successfully on {tracker.device}")
-    
-    # Get model info
-    model_info = tracker.get_model_info()
-    print(f"Model info: {model_info}")
     
     # Load sample images and keypoints
     print("\n🖼️ Loading sample images...")
@@ -678,8 +604,7 @@ def main():
     
     # Show all reference images info
     print("\n� Reference images information:")
-    ref_info = tracker.get_reference_images_info()
-    print(json.dumps(ref_info, indent=2))
+    print(f"📍 Reference images set: Primary key='{tracker.default_reference_key}' and secondary key='ref_offset'")
     
     # Demonstrate different tracking modes
     print("\n🎯 Testing different tracking modes...")
@@ -719,15 +644,23 @@ def main():
     result_error = tracker.track_keypoints(stored_keypoints, comp_image, reference_image="non_existent_key")
     print(f"   Non-existent key: {result_error.get('error', 'No error')}")
     
-    # Try to remove reference image
+    # Test reference image removal
     print("\n🗑️ Testing reference image removal:")
-    remove_result = tracker.remove_reference_image("ref_image_only")
-    print(f"   Remove result: {remove_result}")
+    print(f"   Before removal: {list(tracker.reference_images.keys())}")
+    print(f"   Current default: {tracker.default_reference_key}")
     
-    # Show updated reference info
-    print("\n📊 Updated reference images after removal:")
-    updated_ref_info = tracker.get_reference_images_info()
-    print(json.dumps(updated_ref_info, indent=2))
+    # Test removing by specific key
+    remove_result = tracker.remove_reference_image("ref_image_only")
+    print(f"   Remove by key result: {remove_result.get('success', False)} - {remove_result.get('removed_key', 'None')}")
+    print(f"   After key removal: {list(tracker.reference_images.keys())}")
+    
+    # Test removing default reference (image_key=None)
+    print(f"\n   Testing remove default (image_key=None):")
+    remove_default_result = tracker.remove_reference_image(None)  # Remove default
+    print(f"   Remove default result: {remove_default_result.get('success', False)} - {remove_default_result.get('removed_key', 'None')}")
+    print(f"   Input key was: {remove_default_result.get('input_key', 'N/A')}")
+    print(f"   After default removal: {list(tracker.reference_images.keys())}")
+    print(f"   New default: {remove_default_result.get('new_default_key', 'None')}")
     
     # Save results
     if result_default['success']:
@@ -736,7 +669,8 @@ def main():
         
         output_data = {
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'reference_images_info': updated_ref_info,
+            'reference_images_count': len(tracker.reference_images),
+            'available_reference_keys': list(tracker.reference_images.keys()),
             'tracking_results': {
                 'default_reference': {
                     'success': result_default['success'],
@@ -765,17 +699,19 @@ def main():
         
         print(f"✅ Results saved to: {output_path}")
     
-    # Show final model info
-    print("\n🔧 Final model information:")
-    model_info = tracker.get_model_info()
-    print(json.dumps(model_info, indent=2))
+    # Show final summary
+    print("\n🔧 Final summary:")
+    print(f"   - Device: {tracker.device}")
+    print(f"   - Reference images stored: {len(tracker.reference_images)}")
+    print(f"   - Default reference key: {tracker.default_reference_key}")
     
     print("\n🎉 Demo completed successfully!")
     print(f"💡 Key features demonstrated:")
     print(f"   - Multiple reference images with custom keys")
     print(f"   - Three tracking modes: default, key-based, direct array")
-    print(f"   - Reference image management (add, remove, query)")
+    print(f"   - Reference image management (add/remove with proper default handling)")
     print(f"   - Error handling for invalid keys")
+    print(f"   - Public API: set_reference_image(), track_keypoints(), remove_reference_image()")
     print(f"   - Comprehensive status reporting")
 
 
