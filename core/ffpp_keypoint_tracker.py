@@ -272,21 +272,10 @@ class FFPPKeypointTracker:
                 new_x = kp['x'] + dx
                 new_y = kp['y'] + dy
                 
-                tracked_kp = {
-                    'name': kp.get('name', f"keypoint_{kp.get('id', len(tracked_keypoints) + 1)}"),
-                    'original_x': float(kp['x']),
-                    'original_y': float(kp['y']),
-                    'tracked_x': float(new_x),
-                    'tracked_y': float(new_y),
-                    'displacement_x': float(dx),
-                    'displacement_y': float(dy),
-                    'displacement_magnitude': float(np.sqrt(dx**2 + dy**2))
-                }
-                
-                # Include original keypoint data if present
-                for key, value in kp.items():
-                    if key not in ['x', 'y'] and key not in tracked_kp:
-                        tracked_kp[key] = value
+                # Create new keypoint by copying the original and updating x, y
+                tracked_kp = kp.copy()  # Preserve all original keys and values
+                tracked_kp['x'] = float(new_x)  # Update x coordinate
+                tracked_kp['y'] = float(new_y)  # Update y coordinate
                 
                 tracked_keypoints.append(tracked_kp)
             
@@ -563,21 +552,17 @@ def test_simple():
             print("❌ Failed to load sample images")
             return False
         
-        # Load keypoints - use only first 5 for simple test
+        # Load keypoints - use all keypoints for comprehensive test
         with open(ref_keypoints_path, 'r') as f:
             keypoints_data = json.load(f)
         
-        # Convert to required format and use subset
-        all_keypoints = keypoints_data['keypoints']
-        test_keypoints = [
-            {'x': float(kp['x']), 'y': float(kp['y']), 'name': f"point_{i+1}"}
-            for i, kp in enumerate(all_keypoints[:5])  # Use first 5 keypoints
-        ]
+        # Use all original keypoints directly without modification
+        test_keypoints = keypoints_data['keypoints']  # Use all keypoints as-is
         
         print(f"✅ Data loaded successfully:")
         print(f"   Reference image: {ref_img.shape}")
         print(f"   Target image: {target_img.shape}")  
-        print(f"   Test keypoints: {len(test_keypoints)} (subset of {len(all_keypoints)})")
+        print(f"   Test keypoints: {len(test_keypoints)} (all keypoints)")
         
     except Exception as e:
         print(f"❌ Error loading sample data: {e}")
