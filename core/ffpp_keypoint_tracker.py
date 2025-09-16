@@ -461,22 +461,6 @@ class FFPPKeypointTracker:
         start_time = time.time()
         
         try:
-            # Convert images to bytes format for server's compute_flow_from_bytes function
-            from io import BytesIO
-            from PIL import Image
-            
-            # Convert numpy arrays to PIL Images
-            img1_pil = Image.fromarray(image1.astype(np.uint8))
-            img2_pil = Image.fromarray(image2.astype(np.uint8))
-            
-            # Convert to bytes
-            img1_bytes = BytesIO()
-            img2_bytes = BytesIO()
-            img1_pil.save(img1_bytes, format='PNG')
-            img2_pil.save(img2_bytes, format='PNG')
-            img1_bytes = img1_bytes.getvalue()
-            img2_bytes = img2_bytes.getvalue()
-            
             # Use the server's exact fast function with our loaded model
             actual_ffp_path = os.path.join(self.paths['project_root'], 'ThirdParty', 'FlowFormerPlusPlusServer')
             original_cwd = os.getcwd()
@@ -489,15 +473,21 @@ class FFPPKeypointTracker:
                     del sys.modules[k]
                 
                 import visualize_flow_img_pair as flow_utils
+                import torch
                 
-                # Use the ultra-fast cached computation - this should be ~0.3s!
-                flow = flow_utils.compute_flow_from_bytes(
-                    img1_bytes, img2_bytes,
-                    model_path=None,  # Use our pre-loaded model
-                    device_config=str(self.device),
-                    max_size=400,
-                    use_cache=True
-                )
+                # Convert numpy arrays directly to torch tensors (skip bytes conversion)
+                image1_tensor = torch.from_numpy(image1.astype(np.uint8)).permute(2, 0, 1).float()
+                image2_tensor = torch.from_numpy(image2.astype(np.uint8)).permute(2, 0, 1).float()
+                
+                # Call compute_flow_with_model directly with no_grad - much simpler!
+                with torch.no_grad():
+                    flow = flow_utils.compute_flow_with_model(
+                        self.model, 
+                        self.device, 
+                        image1_tensor, 
+                        image2_tensor, 
+                        use_tiling=False
+                    )
                 
             finally:
                 os.chdir(original_cwd)
