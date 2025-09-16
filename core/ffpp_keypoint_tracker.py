@@ -603,6 +603,61 @@ def test_simple():
             first_kp = result['tracked_keypoints'][0]
             print(f"   Example displacement: ({first_kp.get('displacement_x', 0):.1f}, {first_kp.get('displacement_y', 0):.1f})")
         
+        # ========================================
+        # VISUALIZATION AND OUTPUT
+        # ========================================
+        print("\n📊 Creating visualization...")
+        try:
+            import os
+            
+            # Create output directory if it doesn't exist
+            output_dir = 'output'
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Create visualization image
+            vis_img = target_img.copy()
+            
+            # Draw tracked keypoints
+            for i, kp in enumerate(result['tracked_keypoints']):
+                x, y = int(round(kp['x'])), int(round(kp['y']))
+                
+                # Ensure coordinates are within image bounds
+                h, w = vis_img.shape[:2]
+                if 0 <= x < w and 0 <= y < h:
+                    # Draw keypoint as circle
+                    cv2.circle(vis_img, (x, y), 3, (0, 255, 0), -1)  # Green filled circle
+                    # Draw keypoint number
+                    cv2.putText(vis_img, str(i+1), (x+5, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+            
+            # Save visualization
+            output_path = os.path.join(output_dir, 'test_simple_tracked_keypoints.jpg')
+            cv2.imwrite(output_path, vis_img)
+            print(f"✅ Visualization saved to: {output_path}")
+            
+            # Save tracking results as JSON
+            json_output_path = os.path.join(output_dir, 'test_simple_results.json')
+            output_data = {
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'test_type': 'simple_direct_tracking',
+                'initialization_time': init_elapsed_time,
+                'tracking_time': elapsed_time,
+                'keypoints_count': tracked_count,
+                'tracked_keypoints': result['tracked_keypoints'],
+                'processing_stats': {
+                    'flow_computation_time': result.get('flow_computation_time', 0),
+                    'total_processing_time': result.get('total_processing_time', 0),
+                    'reference_image_shape': result.get('reference_image_shape'),
+                    'target_image_shape': result.get('target_image_shape')
+                }
+            }
+            
+            with open(json_output_path, 'w') as f:
+                json.dump(output_data, f, indent=2)
+            print(f"✅ Results saved to: {json_output_path}")
+            
+        except Exception as e:
+            print(f"⚠️ Visualization failed: {e}")
+        
         return True
     else:
         print(f"❌ tracker.track_keypoints() failed: {result.get('error', 'Unknown error')}")
