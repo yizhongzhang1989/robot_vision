@@ -181,9 +181,9 @@ class FFPPKeypointTracker:
     model loading approach as the FlowFormerPlusPlusServer.
     
     Public Interface:
-    - set_reference_image(image, keypoints=None, image_key=None): Store reference image with keypoints
+    - set_reference_image(image, keypoints=None, image_name=None): Store reference image with keypoints
     - track_keypoints(target_image, reference_image=None, reference_keypoints=None): Track keypoints between images
-    - remove_reference_image(image_key=None): Remove a stored reference image by key (None = default)
+    - remove_reference_image(image_name=None): Remove a stored reference image by name (None = default)
     """
     
     def __init__(self, 
@@ -235,7 +235,7 @@ class FFPPKeypointTracker:
     def set_reference_image(self, 
                           image: np.ndarray, 
                           keypoints: Optional[List[Dict]] = None,
-                          image_key: Optional[str] = None) -> Dict:
+                          image_name: Optional[str] = None) -> Dict:
         """Set reference image for keypoint tracking with optional image key.
         
         This is the first of two main public methods. Use this to store reference 
@@ -244,7 +244,7 @@ class FFPPKeypointTracker:
         Args:
             image: Reference image as numpy array (H, W, 3) in RGB format.
             keypoints: Optional list of keypoint dictionaries with 'x', 'y' keys.
-            image_key: Optional string key to identify this reference image. 
+            image_name: Optional string name to identify this reference image. 
                        If None, uses 'default' and sets as default reference.
             
         Returns:
@@ -267,9 +267,9 @@ class FFPPKeypointTracker:
                 }
             
             # Use 'default' key if none provided
-            if image_key is None:
-                image_key = 'default'
-                self.default_reference_key = image_key
+            if image_name is None:
+                image_name = 'default'
+                self.default_reference_key = image_name
             
             # Handle keypoints - convert numpy array to list format if needed
             processed_keypoints = None
@@ -294,24 +294,24 @@ class FFPPKeypointTracker:
             )
             
             # Store reference data
-            self.reference_data[image_key] = ref_data
+            self.reference_data[image_name] = ref_data
             
             # Set as default if it's the first reference or explicitly default
-            if self.default_reference_key is None or image_key == 'default':
-                self.default_reference_key = image_key
+            if self.default_reference_key is None or image_name == 'default':
+                self.default_reference_key = image_name
             
             # Return success information using the reference data
             summary = ref_data.get_summary()
             return {
                 'success': True,
-                'key': image_key,
+                'key': image_name,
                 'original_image_shape': summary['original_shape'],
                 'regularized_image_shape': summary['processed_shape'],
                 'scale_factors': summary['scale_factors'],
                 'keypoints_count': summary['keypoints_count'],
                 'original_keypoints': ref_data.original_keypoints,
                 'regularized_keypoints': ref_data.processed_keypoints,
-                'is_default': image_key == self.default_reference_key,
+                'is_default': image_name == self.default_reference_key,
                 'total_reference_images': len(self.reference_data),
                 'regularization_applied': summary['regularization_applied']
             }
@@ -467,18 +467,18 @@ class FFPPKeypointTracker:
                 'exception': str(e)
             }
 
-    def remove_reference_image(self, image_key: Optional[str] = None) -> Dict:
-        """Remove a stored reference image by key.
+    def remove_reference_image(self, image_name: Optional[str] = None) -> Dict:
+        """Remove a stored reference image by name.
         
         Args:
-            image_key: Key of the reference image to remove. If None, removes the default reference image.
+            image_name: Name of the reference image to remove. If None, removes the default reference image.
             
         Returns:
             Dict with success status and information.
         """
         try:
             # Determine which key to remove
-            key_to_remove = image_key
+            key_to_remove = image_name
             if key_to_remove is None:
                 # Use default reference key
                 if self.default_reference_key is None:
@@ -508,7 +508,7 @@ class FFPPKeypointTracker:
             return {
                 'success': True,
                 'removed_key': key_to_remove,
-                'input_key': image_key,  # Show what was actually passed in
+                'input_key': image_name,  # Show what was actually passed in
                 'new_default_key': self.default_reference_key,
                 'remaining_keys': list(self.reference_data.keys()),
                 'remaining_count': len(self.reference_data)
@@ -911,8 +911,8 @@ def test_ref_img():
     print("\n📋 Setting up references...")
     
     tracker.set_reference_image(ref_image, ref_keypoints)
-    tracker.set_reference_image(ref_image_2, ref_keypoints_2, image_key="ref_offset")
-    tracker.set_reference_image(ref_image, image_key="ref_image_only")
+    tracker.set_reference_image(ref_image_2, ref_keypoints_2, image_name="ref_offset")
+    tracker.set_reference_image(ref_image, image_name="ref_image_only")
     
     print(f"   References: {list(tracker.reference_data.keys())}")
     print(f"   Default: {tracker.default_reference_key}")
