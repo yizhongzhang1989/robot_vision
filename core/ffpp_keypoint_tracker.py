@@ -182,7 +182,7 @@ class FFPPKeypointTracker:
     
     Public Interface:
     - set_reference_image(image, keypoints=None, image_name=None): Store reference image with keypoints
-    - track_keypoints(target_image, reference_image=None, reference_keypoints=None): Track keypoints between images
+    - track_keypoints(target_image, reference_name=None): Track keypoints from stored reference to target image
     - remove_reference_image(image_name=None): Remove a stored reference image by name (None = default)
     """
     
@@ -325,64 +325,50 @@ class FFPPKeypointTracker:
 
     def track_keypoints(self, 
                        target_image: np.ndarray,
-                       reference_image: Union[None, np.ndarray, str] = None,
-                       reference_keypoints: List[Dict] = None) -> Dict:
-        """Track keypoints from reference image to target image.
+                       reference_name: Optional[str] = None) -> Dict:
+        """Track keypoints from stored reference image to target image.
         
         This is the second of two main public methods. Use this to track keypoints
-        from a reference image to a target image using optical flow.
+        from a stored reference image to a target image using optical flow.
         
         Args:
             target_image: Target image as numpy array (H, W, 3) in RGB format.
-            reference_image: Reference image specification:
-                - None: Use default reference image (key stored in default_reference_key)
-                - str: Use stored reference image with this key
-                - np.ndarray: Use this image directly (not stored)
-            reference_keypoints: List of keypoint dictionaries with 'x', 'y' keys.
-                - None: Use keypoints stored with reference image (if available)
+            reference_name: Name of stored reference image to use. If None, uses default reference.
             
         Returns:
             dict: Tracking results with success status, tracked keypoints, and statistics.
+                 The tracked keypoints are returned in the original target image coordinate system.
+        
+        Note:
+            You must call set_reference_image() first to store a reference image with keypoints
+            before using this function. The target image is automatically resized to match the
+            reference image dimensions for flow computation, then keypoints are scaled back to
+            the original target image coordinates.
         """
         try:
-            # Determine reference image to use
-            ref_img = None
-            image_source = None
-            reference_key = None
-            
-            if isinstance(reference_image, np.ndarray):
-                # Use provided numpy array directly
-                ref_img = reference_image.copy()
-                image_source = 'provided_array'
-                reference_key = 'provided_array'
-                
-            elif isinstance(reference_image, str):
-                # Use stored reference image with specified key
-                if reference_image not in self.reference_data:
-                    return {
-                        'success': False,
-                        'error': f'Reference image with key "{reference_image}" not found. Available keys: {list(self.reference_data.keys())}'
-                    }
-                ref_img = self.reference_data[reference_image].processed_image.copy()
-                image_source = 'stored_by_key'
-                reference_key = reference_image
-                
-            elif reference_image is None:
-                # Use default reference image
+            # Determine which reference to use
+            if reference_name is None:
+                # Use default reference
                 if self.default_reference_key is None or self.default_reference_key not in self.reference_data:
                     return {
                         'success': False,
-                        'error': f'No default reference image available. Available keys: {list(self.reference_data.keys())}. Use set_reference_image() first or provide a reference_image parameter.'
+                        'error': f'No default reference image available. Available references: {list(self.reference_data.keys())}. Use set_reference_image() first.'
                     }
-                ref_img = self.reference_data[self.default_reference_key].processed_image.copy()
+                reference_name = self.default_reference_key
                 image_source = 'default_stored'
-                reference_key = self.default_reference_key
-                
             else:
-                return {
-                    'success': False,
-                    'error': f'Invalid reference_image type: {type(reference_image)}. Must be None, str, or np.ndarray.'
-                }
+                # Use specified reference
+                if reference_name not in self.reference_data:
+                    return {
+                        'success': False,
+                        'error': f'Reference image "{reference_name}" not found. Available references: {list(self.reference_data.keys())}'
+                    }
+                image_source = 'stored_by_name'
+            
+            # Get reference data
+            ref_data = self.reference_data[reference_name]
+            ref_img = ref_data.processed_image.copy()
+            ref_keypoints = ref_data.processed_keypoints.copy()
             
             # Validate target image
             if not isinstance(target_image, np.ndarray):
@@ -391,26 +377,28 @@ class FFPPKeypointTracker:
                     'error': f'Target image must be numpy array, got {type(target_image)}'
                 }
             
-            target_img = target_image.copy()
-            
-            # Validate image dimensions
-            if len(ref_img.shape) != 3 or ref_img.shape[2] != 3:
+            if target_image.ndim != 3 or target_image.shape[2] != 3:
                 return {
                     'success': False,
-                    'error': f'Reference image must be RGB format (H, W, 3), got {ref_img.shape}'
-                }
-                
-            if len(target_img.shape) != 3 or target_img.shape[2] != 3:
-                return {
-                    'success': False,
-                    'error': f'Target image must be RGB format (H, W, 3), got {target_img.shape}'
+                    'error': f'Target image must be RGB format (H, W, 3), got {target_image.shape}'
                 }
             
-            # Check if images have same dimensions
+            # Resize target image to match reference dimensions exactly
+            import cv2
+            ref_height, ref_width = ref_img.shape[:2]
+            orig_height, orig_width = target_image.shape[:2]
+            target_img = cv2.resize(target_image, (ref_width, ref_height), interpolation=cv2.INTER_CUBIC)
+            
+            # Calculate scale factors to transform keypoints back to original target coordinates
+            scale_x = orig_width / ref_width   # Scale factor for x coordinates
+            scale_y = orig_height / ref_height  # Scale factor for y coordinates
+            target_was_resized = (orig_height != ref_height) or (orig_width != ref_width)
+            
+            # Verify dimensions match
             if ref_img.shape != target_img.shape:
                 return {
                     'success': False,
-                    'error': f'Image dimension mismatch: Reference is {ref_img.shape}, target is {target_img.shape}'
+                    'error': f'Failed to resize target image: Reference is {ref_img.shape}, resized target is {target_img.shape}'
                 }
             
             # Compute optical flow
@@ -419,7 +407,7 @@ class FFPPKeypointTracker:
             
             # Track keypoints using flow with bilinear interpolation
             tracked_keypoints = []
-            for kp in reference_keypoints:
+            for kp in ref_keypoints:
                 x, y = kp['x'], kp['y']
                 
                 # Ensure coordinates are within flow bounds
@@ -432,14 +420,22 @@ class FFPPKeypointTracker:
                 # Get flow at keypoint location using bilinear interpolation
                 dx, dy = self._bilinear_interpolate_flow(flow, x, y)
                 
-                # Calculate new position
-                new_x = kp['x'] + dx
-                new_y = kp['y'] + dy
+                # Calculate new position in resized coordinate system
+                new_x_resized = kp['x'] + dx
+                new_y_resized = kp['y'] + dy
+                
+                # Scale back to original target image coordinates
+                if target_was_resized:
+                    new_x_original = new_x_resized * scale_x
+                    new_y_original = new_y_resized * scale_y
+                else:
+                    new_x_original = new_x_resized
+                    new_y_original = new_y_resized
                 
                 # Create new keypoint by copying the original and updating x, y
                 tracked_kp = kp.copy()  # Preserve all original keys and values
-                tracked_kp['x'] = float(new_x)  # Update x coordinate
-                tracked_kp['y'] = float(new_y)  # Update y coordinate
+                tracked_kp['x'] = float(new_x_original)  # Update x coordinate (in original target scale)
+                tracked_kp['y'] = float(new_y_original)  # Update y coordinate (in original target scale)
                 
                 tracked_keypoints.append(tracked_kp)
             
@@ -450,14 +446,18 @@ class FFPPKeypointTracker:
                 'tracked_keypoints': tracked_keypoints,
                 'flow_computation_time': flow_stats['processing_time'],
                 'total_processing_time': total_time,
+                'reference_name': reference_name,
                 'reference_image_source': image_source,
-                'reference_key': reference_key,
                 'reference_image_shape': ref_img.shape,
                 'target_image_shape': target_img.shape,
+                'original_target_shape': target_image.shape,
+                'target_resized': target_was_resized,
+                'target_scale_factors': {'x': scale_x, 'y': scale_y} if target_was_resized else None,
                 'flow_shape': flow.shape,
                 'keypoints_count': len(tracked_keypoints),
-                'available_reference_keys': list(self.reference_data.keys()),
-                'default_reference_key': self.default_reference_key
+                'reference_keypoints_count': len(ref_keypoints),
+                'available_references': list(self.reference_data.keys()),
+                'default_reference': self.default_reference_key
             }
             
         except Exception as e:
@@ -776,12 +776,20 @@ def test_simple():
     print(f"✅ FFPPKeypointTracker initialized on {tracker.device}")
     print(f"   Initialization time: {init_elapsed_time:.3f}s")
     
-    # Test direct keypoint tracking (no reference storage)
+    # Test keypoint tracking with stored reference
     print("\n🎯 Testing tracker.track_keypoints() method...")
-    print("   Mode: Direct tracking (reference_image passed as array)")
+    print("   Mode: Using stored reference image")
+    
+    # First set up the reference image with keypoints
+    ref_result = tracker.set_reference_image(ref_img, test_keypoints)
+    if not ref_result['success']:
+        print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Reference image set with {ref_result['keypoints_count']} keypoints")
     
     start_time = time.time()
-    result = tracker.track_keypoints(target_img, reference_image=ref_img, reference_keypoints=test_keypoints)
+    result = tracker.track_keypoints(target_img)
     elapsed_time = time.time() - start_time
     
     if result['success']:
@@ -925,25 +933,22 @@ def test_ref_img():
     print("\n🎯 Testing tracking...")
     
     # Test default reference
-    stored_keypoints = tracker.reference_data[tracker.default_reference_key].processed_keypoints
     start_time = time.time()
-    result_default = tracker.track_keypoints(comp_image, reference_image=None, reference_keypoints=stored_keypoints)
+    result_default = tracker.track_keypoints(comp_image)
     elapsed_time = time.time() - start_time
     print(f"   Default: {elapsed_time:.3f}s - {len(result_default.get('tracked_keypoints', []))} points")
     
-    # Test specific key
-    stored_keypoints_2 = tracker.reference_data['ref_offset'].processed_keypoints
+    # Test specific reference by name
     start_time = time.time()
-    result_key = tracker.track_keypoints(comp_image, reference_image="ref_offset", reference_keypoints=stored_keypoints_2)
+    result_key = tracker.track_keypoints(comp_image, reference_name="ref_offset")
     elapsed_time = time.time() - start_time
-    print(f"   By key: {elapsed_time:.3f}s - {len(result_key.get('tracked_keypoints', []))} points")
+    print(f"   By name: {elapsed_time:.3f}s - {len(result_key.get('tracked_keypoints', []))} points")
     
-    # Test direct array
+    # Test third reference (ref_image_only has no keypoints, should show 0 points)
     start_time = time.time()
-    keypoints_dict_format = [{'x': float(kp[0]), 'y': float(kp[1])} for kp in ref_keypoints]
-    result_direct = tracker.track_keypoints(comp_image, reference_image=ref_image, reference_keypoints=keypoints_dict_format)
+    result_no_keypoints = tracker.track_keypoints(comp_image, reference_name="ref_image_only")
     elapsed_time = time.time() - start_time
-    print(f"   Direct: {elapsed_time:.3f}s - {len(result_direct.get('tracked_keypoints', []))} points")
+    print(f"   No keypoints: {elapsed_time:.3f}s - {len(result_no_keypoints.get('tracked_keypoints', []))} points")
     
     # Test removal functionality
     print("\n🗑️ Testing removal...")
@@ -961,8 +966,8 @@ def test_ref_img():
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
             'tracking_results': {
                 'default_mode': result_default.get('tracked_keypoints', []),
-                'key_mode': result_key.get('tracked_keypoints', []),
-                'direct_mode': result_direct.get('tracked_keypoints', [])
+                'by_name_mode': result_key.get('tracked_keypoints', []),
+                'no_keypoints_mode': result_no_keypoints.get('tracked_keypoints', [])
             }
         }
         
