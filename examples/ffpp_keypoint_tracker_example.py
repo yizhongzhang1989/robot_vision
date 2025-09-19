@@ -46,6 +46,74 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core.ffpp_keypoint_tracker import FFPPKeypointTracker
 
 
+def smooth_color_transition(value):
+    """
+    Create smooth color transition for values from 0 to 1.
+    
+    Color progression:
+    0.0 -> (255,0,0)   Red
+    0.25 -> (255,255,0) Yellow  
+    0.5 -> (0,255,0)   Green
+    0.75 -> (0,255,255) Cyan
+    1.0 -> (0,0,255)   Blue
+    
+    Args:
+        value (float): Value between 0 and 1
+        
+    Returns:
+        tuple: (B, G, R) color values for OpenCV
+    """
+    # Clamp value to [0, 1]
+    value = max(0.0, min(1.0, value))
+    
+    # Define the 5 key colors in RGB format
+    colors_rgb = [
+        (255, 0, 0),    # Red (0.0)
+        (255, 255, 0),  # Yellow (0.25)
+        (0, 255, 0),    # Green (0.5)
+        (0, 255, 255),  # Cyan (0.75)
+        (0, 0, 255)     # Blue (1.0)
+    ]
+    
+    # Scale value to segment index
+    scaled_value = value * 4  # 4 segments between 5 colors
+    segment_index = int(scaled_value)
+    local_t = scaled_value - segment_index
+    
+    # Handle edge case
+    if segment_index >= 4:
+        segment_index = 3
+        local_t = 1.0
+    
+    # Get the two colors to interpolate between
+    color1_rgb = colors_rgb[segment_index]
+    color2_rgb = colors_rgb[segment_index + 1]
+    
+    # Linear interpolation between the two colors
+    r = int(color1_rgb[0] * (1 - local_t) + color2_rgb[0] * local_t)
+    g = int(color1_rgb[1] * (1 - local_t) + color2_rgb[1] * local_t)
+    b = int(color1_rgb[2] * (1 - local_t) + color2_rgb[2] * local_t)
+    
+    # Return in BGR format for OpenCV
+    return (b, g, r)
+
+
+def consistency_to_color(consistency_distance, max_distance=5.0):
+    """
+    Map consistency distance to color using smooth transition.
+    
+    Args:
+        consistency_distance (float): Consistency distance in pixels
+        max_distance (float): Maximum distance to map to blue (default: 5.0)
+        
+    Returns:
+        tuple: (B, G, R) color values for OpenCV
+    """
+    # Normalize consistency distance to [0, 1] range
+    normalized_value = consistency_distance / max_distance
+    return smooth_color_transition(normalized_value)
+
+
 def list_cuda_devices():
     """
     List all available CUDA devices that can be used for model initialization.
@@ -259,10 +327,14 @@ def test_bidirectional_validation():
         print("❌ Failed to load model")
         return False
     
-    # Set reference and track with bidirectional validation
-    print("\n🎯 Testing bidirectional flow validation...")
+    # ========================================
+    # KEYPOINT TRACKING
+    # ========================================
+    print("\n🎯 Step 1: Setting reference image...")
     tracker.set_reference_image(ref_img, ref_keypoints)
+    print(f"✅ Reference image set with {len(ref_keypoints)} keypoints")
     
+    print("\n🎯 Step 2: Tracking keypoints with bidirectional validation...")
     start_time = time.time()
     result = tracker.track_keypoints(target_img, bidirectional=True)
     elapsed_time = time.time() - start_time
@@ -271,7 +343,18 @@ def test_bidirectional_validation():
         print(f"❌ Bidirectional tracking failed: {result.get('error', 'Unknown error')}")
         return False
     
-    print(f"✅ Bidirectional tracking completed in {elapsed_time:.3f}s")
+    tracked_count = len(result.get('tracked_keypoints', []))
+    print(f"✅ Bidirectional tracking successful!")
+    print(f"   Time: {elapsed_time:.3f}s")
+    print(f"   Tracked: {tracked_count} keypoints")
+    print(f"   Processing time: {result.get('total_processing_time', 0):.3f}s")
+    
+    # Show displacement statistics
+    if tracked_count > 0:
+        displacements = [(kp.get('displacement_x', 0), kp.get('displacement_y', 0)) 
+                        for kp in result['tracked_keypoints']]
+        avg_displacement = np.mean([np.sqrt(dx**2 + dy**2) for dx, dy in displacements])
+        print(f"   Average displacement: {avg_displacement:.1f} pixels")
     
     # Analyze bidirectional statistics
     if 'bidirectional_stats' in result:
@@ -290,29 +373,78 @@ def test_bidirectional_validation():
             high_acc_pct = (stats.get('high_accuracy_count', 0) / total_points) * 100
             print(f"   High accuracy percentage: {high_acc_pct:.1f}%")
     
-    # Save bidirectional results
-    print("\n💾 Saving bidirectional results...")
+    # ========================================
+    # OUTPUT AND VISUALIZATION
+    # ========================================
+    print("\n� Creating outputs...")
     try:
+        # Create output directory
         output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
+        # 1. SAVE JSON RESULTS FIRST
         json_path = os.path.join(output_dir, 'bidirectional_validation_results.json')
-        output_data = {
-            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'test_type': 'bidirectional_validation',
-            'tracking_time': elapsed_time,
-            'keypoints_count': len(result.get('tracked_keypoints', [])),
-            'bidirectional_stats': result.get('bidirectional_stats', {}),
-            'tracked_keypoints': result['tracked_keypoints']
-        }
         
+        # Write the result directly as returned by track_keypoints()
         with open(json_path, 'w') as f:
-            json.dump(output_data, f, indent=2)
+            json.dump(result, f, indent=2)
         
-        print(f"✅ Bidirectional results saved: {json_path}")
+        print(f"✅ Results saved: {json_path}")
+        
+        # 2. CREATE AND SAVE VISUALIZATION IMAGE
+        vis_img = target_img.copy()
+        for i, kp in enumerate(result['tracked_keypoints']):
+            x, y = int(round(kp['x'])), int(round(kp['y']))
+            h, w = vis_img.shape[:2]
+            
+            if 0 <= x < w and 0 <= y < h:
+                # Use smooth color transition based on consistency distance
+                if 'consistency_distance' in kp:
+                    consistency = kp['consistency_distance']
+                    color = consistency_to_color(consistency, max_distance=5.0)
+                else:
+                    color = (0, 255, 0)  # Default green for no consistency data
+                
+                cv2.circle(vis_img, (x, y), 4, color, -1)  # Slightly larger circle
+                cv2.putText(vis_img, str(i+1), (x+6, y-6), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add color legend to the image
+        legend_height = 60
+        legend_width = 300
+        legend_x = 10
+        legend_y = 10
+        
+        # Create legend background
+        cv2.rectangle(vis_img, (legend_x, legend_y), 
+                     (legend_x + legend_width, legend_y + legend_height), 
+                     (0, 0, 0), -1)
+        cv2.rectangle(vis_img, (legend_x, legend_y), 
+                     (legend_x + legend_width, legend_y + legend_height), 
+                     (255, 255, 255), 1)
+        
+        # Draw color bar
+        bar_y = legend_y + 15
+        bar_height = 15
+        for i in range(legend_width - 20):
+            value = i / (legend_width - 20)
+            color = smooth_color_transition(value)
+            cv2.line(vis_img, (legend_x + 10 + i, bar_y), 
+                    (legend_x + 10 + i, bar_y + bar_height), color, 1)
+        
+        # Add text labels
+        cv2.putText(vis_img, "Consistency: 0px", (legend_x + 10, bar_y + bar_height + 15), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        cv2.putText(vis_img, "5px", (legend_x + legend_width - 30, bar_y + bar_height + 15), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        vis_path = os.path.join(output_dir, 'bidirectional_validation_visualization.jpg')
+        cv2.imwrite(vis_path, vis_img)
+        
+        print(f"✅ Visualization saved: {vis_path}")
         
     except Exception as e:
-        print(f"⚠️ Failed to save results: {e}")
+        print(f"⚠️ Output creation failed: {e}")
     
     return True
 
