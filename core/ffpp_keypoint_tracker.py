@@ -182,7 +182,7 @@ class FFPPKeypointTracker:
     
     Public Interface:
     - set_reference_image(image, keypoints=None, image_name=None): Store reference image with keypoints
-    - track_keypoints(target_image, reference_name=None): Track keypoints from stored reference to target image
+    - track_keypoints(target_image, reference_name=None, bidirectional=False): Track keypoints from stored reference to target image
     - remove_reference_image(image_name=None): Remove a stored reference image by name (None = default)
     """
     
@@ -325,7 +325,8 @@ class FFPPKeypointTracker:
 
     def track_keypoints(self, 
                        target_image: np.ndarray,
-                       reference_name: Optional[str] = None) -> Dict:
+                       reference_name: Optional[str] = None,
+                       bidirectional: bool = False) -> Dict:
         """Track keypoints from stored reference image to target image.
         
         This is the second of two main public methods. Use this to track keypoints
@@ -334,16 +335,22 @@ class FFPPKeypointTracker:
         Args:
             target_image: Target image as numpy array (H, W, 3) in RGB format.
             reference_name: Name of stored reference image to use. If None, uses default reference.
+            bidirectional: If True, compute reverse flow for accuracy validation. Tracks keypoints
+                          forward (ref→target) then backward (target→ref) and measures consistency.
             
         Returns:
             dict: Tracking results with success status, tracked keypoints, and statistics.
                  The tracked keypoints are returned in the original target image coordinate system.
+                 If bidirectional=True, includes accuracy metrics for each keypoint.
         
         Note:
             You must call set_reference_image() first to store a reference image with keypoints
             before using this function. The target image is automatically resized to match the
             reference image dimensions for flow computation, then keypoints are scaled back to
             the original target image coordinates.
+            
+            Bidirectional mode: Computes ref→target flow, then target→ref flow to validate
+            tracking accuracy. Returns consistency distance for each keypoint.
         """
         try:
             # Determine which reference to use
@@ -401,28 +408,56 @@ class FFPPKeypointTracker:
                     'error': f'Failed to resize target image: Reference is {ref_img.shape}, resized target is {target_img.shape}'
                 }
             
-            # Compute optical flow
+            # Compute optical flow (forward: reference → target)
             start_time = time.time()
-            flow, flow_stats = self._compute_flow(ref_img, target_img, return_stats=True)
+            forward_flow, forward_flow_stats = self._compute_flow(ref_img, target_img, return_stats=True)
             
-            # Track keypoints using flow with bilinear interpolation
+            # Compute reverse flow if bidirectional validation is requested
+            reverse_flow = None
+            reverse_flow_stats = None
+            if bidirectional:
+                reverse_flow, reverse_flow_stats = self._compute_flow(target_img, ref_img, return_stats=True)
+            
+            # Track keypoints using forward flow with bilinear interpolation
             tracked_keypoints = []
-            for kp in ref_keypoints:
+            for i, kp in enumerate(ref_keypoints):
                 x, y = kp['x'], kp['y']
                 
                 # Ensure coordinates are within flow bounds
-                h, w = flow.shape[:2]
+                h, w = forward_flow.shape[:2]
                 if x < 0 or x >= w or y < 0 or y >= h:
                     # Handle out-of-bounds points by clamping
                     x = max(0, min(x, w - 1))
                     y = max(0, min(y, h - 1))
                 
-                # Get flow at keypoint location using bilinear interpolation
-                dx, dy = self._bilinear_interpolate_flow(flow, x, y)
+                # Get forward flow at keypoint location using bilinear interpolation
+                dx_forward, dy_forward = self._bilinear_interpolate_flow(forward_flow, x, y)
                 
                 # Calculate new position in resized coordinate system
-                new_x_resized = kp['x'] + dx
-                new_y_resized = kp['y'] + dy
+                new_x_resized = kp['x'] + dx_forward
+                new_y_resized = kp['y'] + dy_forward
+                
+                # Bidirectional validation if enabled
+                consistency_distance = None
+                consistency_error_x = None
+                consistency_error_y = None
+                
+                if bidirectional and reverse_flow is not None:
+                    # Get reverse flow at the tracked position
+                    # Clamp tracked position to reverse flow bounds
+                    tracked_x_clamped = max(0, min(new_x_resized, w - 1))
+                    tracked_y_clamped = max(0, min(new_y_resized, h - 1))
+                    
+                    dx_reverse, dy_reverse = self._bilinear_interpolate_flow(reverse_flow, tracked_x_clamped, tracked_y_clamped)
+                    
+                    # Apply reverse flow to get back to reference coordinates
+                    back_x = new_x_resized + dx_reverse
+                    back_y = new_y_resized + dy_reverse
+                    
+                    # Calculate consistency error (distance from original position)
+                    consistency_error_x = back_x - kp['x']
+                    consistency_error_y = back_y - kp['y']
+                    consistency_distance = float((consistency_error_x**2 + consistency_error_y**2)**0.5)
                 
                 # Scale back to original target image coordinates
                 if target_was_resized:
@@ -437,15 +472,37 @@ class FFPPKeypointTracker:
                 tracked_kp['x'] = float(new_x_original)  # Update x coordinate (in original target scale)
                 tracked_kp['y'] = float(new_y_original)  # Update y coordinate (in original target scale)
                 
+                # Add bidirectional validation metrics if enabled
+                if bidirectional:
+                    tracked_kp['consistency_distance'] = consistency_distance
+                    tracked_kp['consistency_error_x'] = float(consistency_error_x) if consistency_error_x is not None else None
+                    tracked_kp['consistency_error_y'] = float(consistency_error_y) if consistency_error_y is not None else None
+                
                 tracked_keypoints.append(tracked_kp)
             
             total_time = time.time() - start_time
             
+            # Calculate bidirectional statistics if enabled
+            bidirectional_stats = None
+            if bidirectional and len(tracked_keypoints) > 0:
+                consistency_distances = [kp.get('consistency_distance', 0) for kp in tracked_keypoints if kp.get('consistency_distance') is not None]
+                if consistency_distances:
+                    bidirectional_stats = {
+                        'mean_consistency_distance': float(sum(consistency_distances) / len(consistency_distances)),
+                        'max_consistency_distance': float(max(consistency_distances)),
+                        'min_consistency_distance': float(min(consistency_distances)),
+                        'consistent_keypoints': len(consistency_distances),
+                        'total_keypoints': len(tracked_keypoints)
+                    }
+            
             return {
                 'success': True,
                 'tracked_keypoints': tracked_keypoints,
-                'flow_computation_time': flow_stats['processing_time'],
+                'flow_computation_time': forward_flow_stats['processing_time'],
+                'reverse_flow_computation_time': reverse_flow_stats['processing_time'] if reverse_flow_stats else None,
                 'total_processing_time': total_time,
+                'bidirectional_enabled': bidirectional,
+                'bidirectional_stats': bidirectional_stats,
                 'reference_name': reference_name,
                 'reference_image_source': image_source,
                 'reference_image_shape': ref_img.shape,
@@ -453,7 +510,8 @@ class FFPPKeypointTracker:
                 'original_target_shape': target_image.shape,
                 'target_resized': target_was_resized,
                 'target_scale_factors': {'x': scale_x, 'y': scale_y} if target_was_resized else None,
-                'flow_shape': flow.shape,
+                'forward_flow_shape': forward_flow.shape,
+                'reverse_flow_shape': reverse_flow.shape if reverse_flow is not None else None,
                 'keypoints_count': len(tracked_keypoints),
                 'reference_keypoints_count': len(ref_keypoints),
                 'available_references': list(self.reference_data.keys()),
