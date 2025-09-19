@@ -1,4 +1,3 @@
-````markdown
 # Robot Vision
 
 High-performance keypoint tracking for robotics applications using FlowFormer++.
@@ -6,12 +5,18 @@ High-performance keypoint tracking for robotics applications using FlowFormer++.
 ## Quick Start
 
 ```bash
-# Install
+# One-click setup (recommended)
+./setup_all_in_one.sh
+
+# Or manual installation
+pip install -r requirements.txt
 pip install -e .
 
-# Run the comprehensive example and test suite
-conda run --name flowformerpp python examples/ffpp_keypoint_tracker_example.py
+# Run examples
+python examples/ffpp_keypoint_tracker_example.py
+```
 
+```python
 # Use in Python  
 from core.ffpp_keypoint_tracker import FFPPKeypointTracker
 tracker = FFPPKeypointTracker()
@@ -54,14 +59,15 @@ robot_vision/
 
 - Python 3.8+
 - CUDA-capable GPU (recommended)
-- FlowFormer++ dependencies (torch, torchvision, etc.)
-- OpenCV for image processing
+- NumPy ≥1.21.0 (supports both 1.x and 2.x)
+- All dependencies auto-resolved with `setup_all_in_one.sh`
 
 ## Features
 
 ### FFPPKeypointTracker
 - **21x faster** than API-based tracking (~0.3s vs ~7s)
-- **Simplified interface**: Just `set_reference_image()` + `track_keypoints()`
+- **NumPy 2.x compatible** - automatic compatibility fixes
+- **One-click setup** - handles submodules, models, dependencies
 - **Bidirectional flow validation** for accuracy assessment
 - **Multiple reference management** with automatic coordinate scaling
 - **GPU acceleration** with CUDA support
@@ -84,6 +90,23 @@ tracker.set_reference_image(img2, kpts2, image_name="setup2")
 result = tracker.track_keypoints(target, reference_name="setup1")
 ```
 
-A repository for vision algorithm development for robotics applications.
+## Installation
 
-This repository contains computer vision algorithms and tools specifically designed for robotic systems. The project focuses on developing robust vision solutions for various robotic tasks including object detection, tracking, localization, and navigation.
+### Option 1: One-click Setup (Recommended)
+```bash
+git clone --recursive https://github.com/yizhongzhang1989/robot_vision.git
+cd robot_vision
+./setup_all_in_one.sh
+```
+Automatically handles:
+- Git submodules
+- NumPy compatibility fixes  
+- Model downloads
+- All dependencies
+
+### Option 2: Manual Setup
+```bash
+pip install -r requirements.txt  # NumPy 2.x compatible versions
+pip install -e .
+# Download models: cd ThirdParty/FlowFormerPlusPlusServer && ./scripts/download_ckpts.sh
+```
