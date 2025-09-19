@@ -626,8 +626,6 @@ class FFPPKeypointTracker:
     
     def _initialize_model(self, model_path: Optional[str], device: str):
         """Initialize FlowFormer++ model by loading it directly in the current environment."""
-        print("🚀 Initializing FlowFormer++ model...")
-        
         try:
             # Use default model path if not provided
             if model_path is None:
@@ -662,9 +660,6 @@ class FFPPKeypointTracker:
                 )
                 
                 self.model_loaded = True
-                print("✅ FlowFormer++ model loaded directly!")
-                print(f"   Device: {self.device}")
-                print("   Ready for ultra-fast flow computation!")
                 
             finally:
                 # Restore original working directory
