@@ -7,7 +7,7 @@ and bidirectional flow validation features. It serves as both a usage example an
 automated test suite.
 
 Code Structure:
-- load_sample_data(): Centralized data loading (images + keypoints)
+- load_sample_data(): Returns (target_img, ref_img, ref_keypoints) tuple
 - test_basic_tracking(): Demonstrates core two-step tracking process
 - test_bidirectional_validation(): Shows accuracy assessment features
 - test_multiple_references(): Multiple reference management demo
@@ -19,6 +19,10 @@ Features demonstrated:
 - Bidirectional flow validation for accuracy assessment
 - Output visualization and JSON export
 - Performance benchmarking
+
+Output Location:
+- All results saved to: output/ffpp_keypoint_tracker_example_output/
+- Includes visualizations, JSON data, and performance benchmarks
 
 Usage:
     python examples/ffpp_keypoint_tracker_example.py
@@ -42,12 +46,7 @@ def load_sample_data():
     Load sample data for testing: reference image, target image, and keypoints.
     
     Returns:
-        dict: Dictionary containing:
-            - 'ref_img': Reference image (numpy array)
-            - 'target_img': Target/comparison image (numpy array) 
-            - 'keypoints': List of keypoints from JSON file
-            - 'success': Boolean indicating if data was loaded successfully
-            - 'error': Error message if loading failed
+        tuple: (target_img, ref_img, ref_keypoints) or None if loading fails
     """
     print("📁 Loading sample data...")
     
@@ -62,34 +61,20 @@ def load_sample_data():
         target_img = cv2.imread(comp_image_path)
         
         if ref_img is None or target_img is None:
-            return {
-                'success': False,
-                'error': 'Failed to load sample images - check if files exist'
-            }
+            print("❌ Failed to load sample images - check if files exist")
+            return None
         
         # Load keypoints
         with open(ref_keypoints_path, 'r') as f:
             keypoints_data = json.load(f)
         
-        keypoints = keypoints_data['keypoints']
+        ref_keypoints = keypoints_data['keypoints']
         
-        print(f"✅ Sample data loaded successfully:")
-        print(f"   Reference image: {ref_img.shape}")
-        print(f"   Target image: {target_img.shape}")  
-        print(f"   Keypoints: {len(keypoints)}")
-        
-        return {
-            'success': True,
-            'ref_img': ref_img,
-            'target_img': target_img,
-            'keypoints': keypoints
-        }
+        return target_img, ref_img, ref_keypoints
         
     except Exception as e:
-        return {
-            'success': False,
-            'error': f'Error loading sample data: {e}'
-        }
+        print(f"❌ Error loading sample data: {e}")
+        return None
 
 
 def test_basic_tracking():
@@ -106,14 +91,7 @@ def test_basic_tracking():
     # ========================================
     # DATA PREPARATION
     # ========================================
-    data = load_sample_data()
-    if not data['success']:
-        print(f"❌ {data['error']}")
-        return False
-    
-    ref_img = data['ref_img']
-    target_img = data['target_img']
-    test_keypoints = data['keypoints']
+    target_img, ref_img, ref_keypoints = load_sample_data()
     
     # ========================================
     # TRACKER INITIALIZATION
@@ -134,7 +112,7 @@ def test_basic_tracking():
     # KEYPOINT TRACKING
     # ========================================
     print("\n🎯 Step 1: Setting reference image...")
-    ref_result = tracker.set_reference_image(ref_img, test_keypoints)
+    ref_result = tracker.set_reference_image(ref_img, ref_keypoints)
     
     if not ref_result['success']:
         print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
@@ -170,7 +148,7 @@ def test_basic_tracking():
     print("\n📊 Creating outputs...")
     try:
         # Create output directory
-        output_dir = 'output'
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
         # Create visualization
@@ -224,14 +202,7 @@ def test_bidirectional_validation():
     # ========================================
     # DATA PREPARATION
     # ========================================
-    data = load_sample_data()
-    if not data['success']:
-        print(f"❌ {data['error']}")
-        return False
-    
-    ref_img = data['ref_img']
-    target_img = data['target_img']
-    test_keypoints = data['keypoints']
+    target_img, ref_img, ref_keypoints = load_sample_data()
     
     # ========================================
     # TRACKER INITIALIZATION
@@ -245,7 +216,7 @@ def test_bidirectional_validation():
     
     # Set reference and track with bidirectional validation
     print("\n🎯 Testing bidirectional flow validation...")
-    tracker.set_reference_image(ref_img, test_keypoints)
+    tracker.set_reference_image(ref_img, ref_keypoints)
     
     start_time = time.time()
     result = tracker.track_keypoints(target_img, bidirectional=True)
@@ -277,7 +248,7 @@ def test_bidirectional_validation():
     # Save bidirectional results
     print("\n💾 Saving bidirectional results...")
     try:
-        output_dir = 'output'
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
         json_path = os.path.join(output_dir, 'bidirectional_validation_results.json')
@@ -314,20 +285,13 @@ def test_multiple_references():
     # ========================================
     # DATA PREPARATION
     # ========================================
-    data = load_sample_data()
-    if not data['success']:
-        print(f"❌ {data['error']}")
-        return False
-    
-    ref_image = data['ref_img']
-    comp_image = data['target_img']
+    target_img, ref_img, ref_keypoints = load_sample_data()
     
     # Use the loaded keypoints directly for different reference scenarios
-    all_keypoints = data['keypoints']
-    half_keypoints = all_keypoints[:len(all_keypoints)//2]  # First half for testing
+    half_keypoints = ref_keypoints[:len(ref_keypoints)//2]  # First half for testing
     
     print(f"✅ Using keypoint sets from loaded data:")
-    print(f"   Full set: {len(all_keypoints)} keypoints")
+    print(f"   Full set: {len(ref_keypoints)} keypoints")
     print(f"   Half set: {len(half_keypoints)} keypoints")
     
     # ========================================
@@ -344,15 +308,15 @@ def test_multiple_references():
     print("\n📋 Setting up multiple references...")
     
     # Reference 1: Full keypoint set (becomes default)
-    tracker.set_reference_image(ref_image, all_keypoints)
-    print(f"   Set default reference: {len(all_keypoints)} keypoints")
+    tracker.set_reference_image(ref_img, ref_keypoints)
+    print(f"   Set default reference: {len(ref_keypoints)} keypoints")
     
     # Reference 2: Half keypoint set
-    tracker.set_reference_image(ref_image, half_keypoints, image_name="half_set")
+    tracker.set_reference_image(ref_img, half_keypoints, image_name="half_set")
     print(f"   Set 'half_set' reference: {len(half_keypoints)} keypoints")
     
     # Reference 3: Image only (no keypoints)
-    tracker.set_reference_image(ref_image, image_name="image_only")
+    tracker.set_reference_image(ref_img, image_name="image_only")
     print(f"   Set 'image_only' reference: 0 keypoints")
     
     print(f"\n📍 Active references: {list(tracker.reference_data.keys())}")
@@ -365,7 +329,7 @@ def test_multiple_references():
     
     # Track with default reference
     start_time = time.time()
-    result_default = tracker.track_keypoints(comp_image)
+    result_default = tracker.track_keypoints(target_img)
     elapsed_time = time.time() - start_time
     results['default'] = result_default
     print(f"   Default: {elapsed_time:.3f}s - {len(result_default.get('tracked_keypoints', []))} points")
@@ -373,7 +337,7 @@ def test_multiple_references():
     # Track with specific references
     for ref_name in ["half_set", "image_only"]:
         start_time = time.time()
-        result = tracker.track_keypoints(comp_image, reference_name=ref_name)
+        result = tracker.track_keypoints(target_img, reference_name=ref_name)
         elapsed_time = time.time() - start_time
         results[ref_name] = result
         print(f"   {ref_name}: {elapsed_time:.3f}s - {len(result.get('tracked_keypoints', []))} points")
@@ -391,7 +355,7 @@ def test_multiple_references():
     # Save multiple reference results
     print("\n💾 Saving multiple reference results...")
     try:
-        output_dir = 'output'
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
         json_path = os.path.join(output_dir, 'multiple_references_results.json')
@@ -434,14 +398,7 @@ def run_performance_benchmark():
     # ========================================
     # DATA PREPARATION
     # ========================================
-    data = load_sample_data()
-    if not data['success']:
-        print(f"❌ {data['error']}")
-        return False
-    
-    ref_img = data['ref_img']
-    target_img = data['target_img']
-    test_keypoints = data['keypoints']
+    target_img, ref_img, ref_keypoints = load_sample_data()
     
     # ========================================
     # TRACKER INITIALIZATION
@@ -454,7 +411,7 @@ def run_performance_benchmark():
         return False
     
     # Set reference once
-    tracker.set_reference_image(ref_img, test_keypoints)
+    tracker.set_reference_image(ref_img, ref_keypoints)
     
     # Benchmark different modes
     print("\n⏱️ Running performance benchmarks...")
@@ -522,7 +479,7 @@ def run_performance_benchmark():
     
     # Save benchmark results
     try:
-        output_dir = 'output'
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
         json_path = os.path.join(output_dir, 'performance_benchmark.json')
@@ -603,7 +560,7 @@ def main():
     
     if passed_tests == total_tests:
         print("🎉 All tests passed successfully!")
-        print("   Check the 'output/' directory for generated results and visualizations.")
+        print("   Check the 'output/ffpp_keypoint_tracker_example_output/' directory for generated results and visualizations.")
     else:
         print("⚠️  Some tests failed - check output above for details")
     
