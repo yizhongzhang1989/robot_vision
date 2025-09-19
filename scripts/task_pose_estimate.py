@@ -680,9 +680,13 @@ class PositioningEstimator:
 def main():
     """Main function to run 3D positioning estimation with FFPPKeypointTracker"""
     try:
-        # Initialize estimator with FFPPKeypointTracker
+        # Get the directory where this script is located
+        script_dir = Path(__file__).parent
+        
+        # Initialize estimator with FFPPKeypointTracker using scripts directory
         # You can specify model_path and device here if needed
         estimator = PositioningEstimator(
+            data_dir=str(script_dir),  # Use scripts directory as data_dir
             model_path=None,  # Uses default sintel.pth
             device='auto'     # Auto selects GPU if available
         )

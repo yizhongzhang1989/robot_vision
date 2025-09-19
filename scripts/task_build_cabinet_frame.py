@@ -58,11 +58,11 @@ class CabinetFrameBuilder:
             data_dir: Base directory containing input and output data
         """
         self.data_dir = Path(data_dir)
-        self.output_dir = Path("output")  # Use project root output directory
+        self.output_dir = Path("output") / "cabinet_frame_build_output"  # Specific output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Path to 3D positioning results
-        self.positioning_results_file = self.output_dir / "pose_estimate_output" / "ffpp_positioning_results.json"
+        self.positioning_results_file = Path("output") / "pose_estimate_output" / "ffpp_positioning_results.json"
         
         # Initialize FFPPKeypointTracker (optional, for additional tracking if needed)
         self.tracker = FFPPKeypointTracker()
@@ -597,7 +597,7 @@ def main():
         print("=" * 70)
         
         # Step 1: Load 3D positioning results
-        print("\n� Loading 3D positioning results...")
+        print("\n📍 Loading 3D positioning results...")
         positioning_data = builder.load_3d_positioning_results()
         
         print(f"✅ Loaded 3D positioning results with {len(builder.keypoints_3d)} keypoints")
@@ -637,10 +637,10 @@ def main():
         
         # Step 3: Save results
         print("\n💾 Saving results...")
-        builder.save_results(results, "coordinate_system_results.json")
+        builder.save_results(results, "cabinet_frame_results.json")
         
         print("\n🎉 Cabinet frame coordinate system establishment completed successfully!")
-        print(f"   Results saved to: {builder.output_dir / 'coordinate_system_results.json'}")
+        print(f"   Results saved to: {builder.output_dir / 'cabinet_frame_results.json'}")
         
     except Exception as e:
         logger.error(f"Cabinet frame establishment failed: {e}")

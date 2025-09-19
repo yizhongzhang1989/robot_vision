@@ -219,3 +219,7 @@ config/private_config.yaml
 temp/
 tmp/
 *.tmp
+
+# Project specific data folders
+scripts/camera_parameters/
+scripts/positioning_data/
