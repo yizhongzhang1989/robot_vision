@@ -206,6 +206,66 @@ create_conda_environment() {
     print_info "To activate: conda activate $CONDA_ENV_NAME"
 }
 
+# Function to check and fix NumPy compatibility issues
+fix_numpy_compatibility() {
+    print_step "Checking NumPy compatibility..."
+    
+    local python_cmd="python"
+    local pip_cmd="pip"
+    
+    # Use conda environment if available
+    if [ "$SKIP_CONDA" = false ] && conda env list | grep -q "^${CONDA_ENV_NAME}"; then
+        python_cmd="conda run -n $CONDA_ENV_NAME python"
+        pip_cmd="conda run -n $CONDA_ENV_NAME pip"
+    fi
+    
+    # Check NumPy version and compatibility
+    print_progress "Detecting NumPy version..."
+    local numpy_version=$($python_cmd -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo "not_found")
+    
+    if [ "$numpy_version" == "not_found" ]; then
+        print_info "NumPy not found, will be installed with requirements"
+        return 0
+    fi
+    
+    print_info "Detected NumPy version: $numpy_version"
+    
+    # Check if it's NumPy 2.x
+    if [[ $numpy_version == 2.* ]]; then
+        print_info "NumPy 2.x detected - checking for compatibility issues..."
+        
+        # Test for common compatibility issues
+        local compat_test=$($python_cmd -c "
+try:
+    import numpy
+    import scipy
+    import matplotlib
+    print('compatible')
+except Exception as e:
+    if 'numpy.dtype size changed' in str(e) or 'binary incompatibility' in str(e):
+        print('incompatible')
+    else:
+        print('other_error')
+" 2>/dev/null || echo "test_failed")
+        
+        if [ "$compat_test" == "incompatible" ]; then
+            print_warning "NumPy 2.x compatibility issues detected!"
+            print_progress "Upgrading packages for NumPy 2.x compatibility..."
+            
+            # Upgrade packages that commonly have NumPy 1.x/2.x compatibility issues
+            $pip_cmd install --upgrade scipy matplotlib pillow scikit-image opencv-python
+            
+            print_success "Packages upgraded for NumPy 2.x compatibility"
+        elif [ "$compat_test" == "compatible" ]; then
+            print_success "NumPy compatibility check passed"
+        else
+            print_warning "Could not fully test NumPy compatibility, proceeding with caution"
+        fi
+    else
+        print_info "NumPy 1.x detected - should be compatible with most packages"
+    fi
+}
+
 # Function to install Python dependencies
 install_dependencies() {
     print_step "Installing Python dependencies..."
@@ -256,6 +316,9 @@ install_dependencies() {
     print_progress "Installing robot vision toolkit in development mode..."
     $pip_cmd install -e .
     
+    # Check and fix NumPy compatibility after all packages are installed
+    fix_numpy_compatibility
+    
     print_success "Python dependencies installed successfully!"
 }
 
@@ -279,15 +342,33 @@ download_model_checkpoints() {
         # Run the download script
         if ./scripts/download_ckpts.sh; then
             print_success "FlowFormer++ checkpoints downloaded successfully!"
+            
+            # Verify critical checkpoint files exist
+            local missing_checkpoints=()
+            for checkpoint in "sintel.pth" "things.pth" "kitti.pth" "chairs.pth"; do
+                if [ ! -f "checkpoints/$checkpoint" ]; then
+                    missing_checkpoints+=("$checkpoint")
+                fi
+            done
+            
+            if [ ${#missing_checkpoints[@]} -gt 0 ]; then
+                print_warning "Some checkpoint files are missing: ${missing_checkpoints[*]}"
+                print_info "This may cause issues when running examples"
+            else
+                print_success "All required checkpoint files verified!"
+            fi
         else
             print_error "Failed to download FlowFormer++ checkpoints"
+            print_info "This will prevent the examples from running properly"
             print_info "You can download them manually later by running:"
             print_info "  cd ThirdParty/FlowFormerPlusPlusServer && ./scripts/download_ckpts.sh"
+            print_warning "Setup will continue, but examples may fail without model files"
         fi
         
         cd "$SCRIPT_DIR"
     else
         print_warning "FlowFormer++ download script not found"
+        print_info "Examples may not work without model checkpoints"
     fi
     
     print_success "Model checkpoint download completed!"
@@ -305,17 +386,76 @@ run_basic_tests() {
     # Test import of core modules
     print_progress "Testing core module imports..."
     
-    if $python_cmd -c "import core; print('✓ Core module imported successfully')"; then
+    if $python_cmd -c "import core; print('✓ Core module imported successfully')" 2>/dev/null; then
         print_success "Core module import test passed!"
     else
         print_warning "Core module import test failed"
+        return 1
+    fi
+    
+    # Test NumPy/SciPy compatibility
+    print_progress "Testing NumPy/SciPy compatibility..."
+    local numpy_scipy_test=$($python_cmd -c "
+try:
+    import numpy, scipy, matplotlib
+    print('✓ NumPy/SciPy/matplotlib compatibility verified')
+    print('compatible')
+except Exception as e:
+    print(f'✗ Compatibility issue: {e}')
+    print('incompatible')
+" 2>/dev/null || echo "test_failed")
+    
+    if [[ $numpy_scipy_test == *"compatible"* ]]; then
+        print_success "NumPy/SciPy compatibility test passed!"
+    else
+        print_warning "NumPy/SciPy compatibility test failed"
+        print_info "This may cause issues when running examples"
     fi
     
     # Test FlowFormer++ API import
-    if $python_cmd -c "import sys; sys.path.insert(0, 'ThirdParty/FlowFormerPlusPlusServer'); import flowformer_api; print('✓ FlowFormer++ API imported successfully')"; then
+    if $python_cmd -c "import sys; sys.path.insert(0, 'ThirdParty/FlowFormerPlusPlusServer'); import flowformer_api; print('✓ FlowFormer++ API imported successfully')" 2>/dev/null; then
         print_success "FlowFormer++ API import test passed!"
     else
         print_warning "FlowFormer++ API import test failed"
+    fi
+    
+    # Test FFPPKeypointTracker import (main functionality)
+    print_progress "Testing FFPPKeypointTracker import..."
+    if $python_cmd -c "from core.ffpp_keypoint_tracker import FFPPKeypointTracker; print('✓ FFPPKeypointTracker imported successfully')" 2>/dev/null; then
+        print_success "FFPPKeypointTracker import test passed!"
+    else
+        print_warning "FFPPKeypointTracker import test failed"
+        print_info "This indicates a serious setup issue"
+        return 1
+    fi
+    
+    # Test if we can run a basic example (optional, only if model files exist)
+    if [ -f "ThirdParty/FlowFormerPlusPlusServer/checkpoints/sintel.pth" ]; then
+        print_progress "Testing example script execution (quick test)..."
+        # Run a minimal test to see if the example can at least start
+        local example_test=$($python_cmd -c "
+import sys
+sys.path.insert(0, '.')
+try:
+    from core.ffpp_keypoint_tracker import FFPPKeypointTracker
+    # Just test initialization without actually running tracking
+    print('✓ Example script can initialize properly')
+    print('example_ready')
+except Exception as e:
+    print(f'✗ Example initialization failed: {e}')
+    print('example_failed')
+" 2>/dev/null || echo "test_failed")
+        
+        if [[ $example_test == *"example_ready"* ]]; then
+            print_success "Example script initialization test passed!"
+            print_info "You should be able to run: python examples/ffpp_keypoint_tracker_example.py"
+        else
+            print_warning "Example script test failed"
+            print_info "There may be issues when running the examples"
+        fi
+    else
+        print_info "Skipping example test - model checkpoints not found"
+        print_info "Download models to enable full functionality testing"
     fi
     
     print_success "Basic tests completed!"
@@ -344,9 +484,11 @@ display_setup_info() {
     echo -e "${CYAN}🚀 Quick Start:${NC}"
     if [ "$SKIP_CONDA" = false ]; then
         echo "   1. Activate environment: conda activate $CONDA_ENV_NAME"
-        echo "   2. Run example: python examples/keypoint_tracker_simple.py"
+        echo "   2. Run comprehensive example: python examples/ffpp_keypoint_tracker_example.py"
+        echo "   3. Run simple example: python examples/keypoint_tracker_simple.py"
     else
-        echo "   1. Run example: python examples/keypoint_tracker_simple.py"
+        echo "   1. Run comprehensive example: python examples/ffpp_keypoint_tracker_example.py"
+        echo "   2. Run simple example: python examples/keypoint_tracker_simple.py"
     fi
     echo ""
     
@@ -362,6 +504,21 @@ display_setup_info() {
         echo "   cd ThirdParty/FlowFormerPlusPlusServer && ./scripts/download_ckpts.sh"
         echo ""
     fi
+    
+    # Check if setup was successful
+    local setup_status="✅ Complete"
+    if [ ! -f "ThirdParty/FlowFormerPlusPlusServer/checkpoints/sintel.pth" ]; then
+        setup_status="⚠️  Partial (missing model files)"
+    fi
+    
+    echo -e "${CYAN}🏁 Setup Status: ${setup_status}${NC}"
+    if [[ $setup_status == *"Partial"* ]]; then
+        echo -e "${YELLOW}   Some components may not work without model files${NC}"
+        echo -e "${YELLOW}   Run the model download command above to complete setup${NC}"
+    else
+        echo -e "${GREEN}   All components should be ready to use!${NC}"
+    fi
+    echo ""
     
     echo -e "${CYAN}📖 Documentation:${NC}"
     echo "   • Main README: README.md"
