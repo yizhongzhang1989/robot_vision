@@ -7,6 +7,7 @@ and bidirectional flow validation features. It serves as both a usage example an
 automated test suite.
 
 Code Structure:
+- list_cuda_devices(): Lists available CUDA devices for model initialization
 - load_sample_data(): Returns (target_img, ref_img, ref_keypoints) tuple
 - test_basic_tracking(): Demonstrates core two-step tracking process
 - test_bidirectional_validation(): Shows accuracy assessment features
@@ -14,6 +15,7 @@ Code Structure:
 - run_performance_benchmark(): Performance comparison between modes
 
 Features demonstrated:
+- CUDA device detection and information display
 - Basic keypoint tracking with stored references
 - Multiple reference image management  
 - Bidirectional flow validation for accuracy assessment
@@ -25,7 +27,9 @@ Output Location:
 - Includes visualizations, JSON data, and performance benchmarks
 
 Usage:
-    python examples/ffpp_keypoint_tracker_example.py
+    python examples/ffpp_keypoint_tracker_example.py              # Run full test suite
+    python examples/ffpp_keypoint_tracker_example.py --devices    # Check CUDA devices only
+    python examples/ffpp_keypoint_tracker_example.py -d          # Check CUDA devices (short)
 """
 
 import sys
@@ -34,11 +38,68 @@ import cv2
 import json
 import numpy as np
 import time
+import torch
 
 # Add the parent directory to the path to import core modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core.ffpp_keypoint_tracker import FFPPKeypointTracker
+
+
+def list_cuda_devices():
+    """
+    List all available CUDA devices that can be used for model initialization.
+    
+    Returns:
+        dict: Dictionary containing CUDA availability info and device details
+    """
+    device_info = {
+        'cuda_available': torch.cuda.is_available(),
+        'device_count': 0,
+        'devices': [],
+        'current_device': None
+    }
+    
+    if torch.cuda.is_available():
+        device_info['device_count'] = torch.cuda.device_count()
+        device_info['current_device'] = torch.cuda.current_device()
+        
+        print(f"🔧 CUDA Device Information:")
+        print(f"   CUDA Available: ✅ Yes")
+        print(f"   Number of devices: {device_info['device_count']}")
+        print(f"   Current device: {device_info['current_device']}")
+        print()
+        
+        for i in range(device_info['device_count']):
+            props = torch.cuda.get_device_properties(i)
+            device_details = {
+                'id': i,
+                'name': props.name,
+                'total_memory_gb': props.total_memory / (1024**3),
+                'compute_capability': f"{props.major}.{props.minor}",
+                'multiprocessor_count': props.multi_processor_count
+            }
+            device_info['devices'].append(device_details)
+            
+            print(f"   Device {i}: {props.name}")
+            print(f"     Total Memory: {device_details['total_memory_gb']:.1f} GB")
+            print(f"     Compute Capability: {device_details['compute_capability']}")
+            print(f"     Multiprocessors: {device_details['multiprocessor_count']}")
+            
+            # Show memory usage if device is current
+            if i == device_info['current_device']:
+                allocated = torch.cuda.memory_allocated(i) / (1024**3)
+                cached = torch.cuda.memory_reserved(i) / (1024**3)
+                print(f"     Memory Usage: {allocated:.2f} GB allocated, {cached:.2f} GB cached")
+            print()
+    else:
+        print(f"🔧 CUDA Device Information:")
+        print(f"   CUDA Available: ❌ No")
+        print(f"   PyTorch version: {torch.__version__}")
+        print(f"   Running on CPU only")
+        print()
+    
+    return device_info
 
 
 def load_sample_data():
@@ -48,8 +109,6 @@ def load_sample_data():
     Returns:
         tuple: (target_img, ref_img, ref_keypoints) or None if loading fails
     """
-    print("📁 Loading sample data...")
-    
     # Define paths
     ref_image_path = 'sample_data/flow_image_pair/ref_img.jpg'
     comp_image_path = 'sample_data/flow_image_pair/comp_img.jpg'
@@ -515,6 +574,9 @@ def main():
     print("with bidirectional flow validation and multiple reference management.")
     print("=" * 60)
     
+    # List available CUDA devices
+    device_info = list_cuda_devices()
+    
     # Check if sample data exists
     if not os.path.exists('sample_data/flow_image_pair/ref_img.jpg'):
         print("❌ Sample data not found!")
@@ -568,4 +630,18 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Check if user wants to see only device info
+    if len(sys.argv) > 1 and sys.argv[1] in ['--devices', '-d', '--cuda']:
+        print("🔧 CUDA Device Detection Tool")
+        print("=" * 40)
+        device_info = list_cuda_devices()
+        
+        # Print summary
+        if device_info['cuda_available']:
+            print(f"Summary: {device_info['device_count']} CUDA device(s) available")
+            print(f"Recommended for FFPPKeypointTracker: ✅ GPU acceleration enabled")
+        else:
+            print("Summary: No CUDA devices available")
+            print("Recommended for FFPPKeypointTracker: ⚠️ CPU-only mode (slower)")
+    else:
+        main()
