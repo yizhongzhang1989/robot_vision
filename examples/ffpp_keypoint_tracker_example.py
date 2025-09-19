@@ -194,13 +194,6 @@ def test_basic_tracking():
     print(f"   Tracked: {tracked_count} keypoints")
     print(f"   Processing time: {result.get('total_processing_time', 0):.3f}s")
     
-    # Show displacement statistics
-    if tracked_count > 0:
-        displacements = [(kp.get('displacement_x', 0), kp.get('displacement_y', 0)) 
-                        for kp in result['tracked_keypoints']]
-        avg_displacement = np.mean([np.sqrt(dx**2 + dy**2) for dx, dy in displacements])
-        print(f"   Average displacement: {avg_displacement:.1f} pixels")
-    
     # ========================================
     # OUTPUT AND VISUALIZATION
     # ========================================
@@ -210,7 +203,16 @@ def test_basic_tracking():
         output_dir = 'output/ffpp_keypoint_tracker_example_output'
         os.makedirs(output_dir, exist_ok=True)
         
-        # Create visualization
+        # 1. SAVE JSON RESULTS FIRST
+        json_path = os.path.join(output_dir, 'basic_tracking_results.json')
+        
+        # Write the result directly as returned by track_keypoints()
+        with open(json_path, 'w') as f:
+            json.dump(result, f, indent=2)
+        
+        print(f"✅ Results saved: {json_path}")
+        
+        # 2. CREATE AND SAVE VISUALIZATION IMAGE
         vis_img = target_img.copy()
         for i, kp in enumerate(result['tracked_keypoints']):
             x, y = int(round(kp['x'])), int(round(kp['y']))
@@ -221,26 +223,10 @@ def test_basic_tracking():
                 cv2.putText(vis_img, str(i+1), (x+5, y-5), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
-        # Save outputs
         vis_path = os.path.join(output_dir, 'basic_tracking_visualization.jpg')
         cv2.imwrite(vis_path, vis_img)
         
-        json_path = os.path.join(output_dir, 'basic_tracking_results.json')
-        output_data = {
-            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'test_type': 'basic_tracking',
-            'initialization_time': init_elapsed_time,
-            'tracking_time': elapsed_time,
-            'keypoints_count': tracked_count,
-            'tracked_keypoints': result['tracked_keypoints'],
-            'processing_stats': result.get('processing_stats', {})
-        }
-        
-        with open(json_path, 'w') as f:
-            json.dump(output_data, f, indent=2)
-        
         print(f"✅ Visualization saved: {vis_path}")
-        print(f"✅ Results saved: {json_path}")
         
     except Exception as e:
         print(f"⚠️ Output creation failed: {e}")
