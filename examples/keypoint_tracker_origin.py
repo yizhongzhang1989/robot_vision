@@ -2,9 +2,9 @@
 """
 Keypoint Tracking with Optical Flow
 
-This script loads keypoints from test_data/ref_img_knobs.json, computes optical flow
-between test_data/ref_img.jpg and test_data/comp_img.jpg, and tracks where the keypoints move
-to in the comparison image. Results are saved to test_data/output/.
+This script loads keypoints from sample_data/flow_image_pair/ref_img_keypoints.json, computes optical flow
+between sample_data/flow_image_pair/ref_img.jpg and sample_data/flow_image_pair/comp_img.jpg, and tracks where the keypoints move
+to in the comparison image. Results are saved to output/.
 
 Paths are automatically determined relative to the script location.
 """
@@ -25,8 +25,8 @@ from flowformer_api import FlowFormerClient
 # Global paths - automatically determine based on script location
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-TEST_DATA_DIR = os.path.join(PROJECT_ROOT, 'test_data')
-OUTPUT_DIR = os.path.join(TEST_DATA_DIR, 'output')
+SAMPLE_DATA_DIR = os.path.join(PROJECT_ROOT, 'sample_data', 'flow_image_pair')
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'output')
 
 
 def load_keypoints(json_path):
@@ -213,9 +213,9 @@ def main():
     print()
     
     # Check for required files
-    ref_img_path = os.path.join(TEST_DATA_DIR, "ref_img.jpg")
-    comp_img_path = os.path.join(TEST_DATA_DIR, "comp_img.jpg")
-    keypoints_path = os.path.join(TEST_DATA_DIR, "ref_img_knobs.json")
+    ref_img_path = os.path.join(SAMPLE_DATA_DIR, "ref_img.jpg")
+    comp_img_path = os.path.join(SAMPLE_DATA_DIR, "comp_img.jpg")
+    keypoints_path = os.path.join(SAMPLE_DATA_DIR, "ref_img_keypoints.json")
     
     missing_files = []
     for file_path in [ref_img_path, comp_img_path, keypoints_path]:
@@ -362,7 +362,7 @@ if __name__ == "__main__":
     
     if success:
         print("\n💡 Results Summary:")
-        print("   - Keypoints loaded from ref_img_knobs.json")
+        print("   - Keypoints loaded from ref_img_keypoints.json")
         print("   - Optical flow computed between reference and comparison images")
         print("   - Keypoint positions tracked using flow vectors")
         print("   - Visualization saved showing original and tracked positions")
@@ -370,7 +370,7 @@ if __name__ == "__main__":
         print("   - Interactive display window opened showing results")
     else:
         print("\n🔧 Troubleshooting:")
-        print(f"   - Ensure all required files exist in {TEST_DATA_DIR} (ref_img.jpg, comp_img.jpg, ref_img_knobs.json)")
+        print(f"   - Ensure all required files exist in {SAMPLE_DATA_DIR} (ref_img.jpg, comp_img.jpg, ref_img_keypoints.json)")
         print("   - Check server connectivity")
         print("   - Verify image formats are supported")
         print("\n📺 To display results manually, run:")
