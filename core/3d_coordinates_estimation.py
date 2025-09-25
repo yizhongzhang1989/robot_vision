@@ -6,11 +6,16 @@ This script estimates 3D coordinates of keypoints using triangulation method
 from multiple view configurations with file path inputs.
 
 Usage:
-    python task_pose_estimate.py \\
-        --keypoint-files view1.json view2.json view3.json \\
+    # Basic usage (shared camera parameters - most common):
+    python 3d_coordinates_estimation.py \\
+        --reference-keypoints ref_keypoints.json \\
+        --reference-pose ref_pose.json \\
+        --keypoint-files view1_tracking.json view2_tracking.json view3_tracking.json \\
+        --pose-files pose1.json pose2.json pose3.json \\
         --intrinsic-file camera_intrinsic.json \\
-        --extrinsic-files pose1_calib.json pose2_calib.json pose3_calib.json \\
-        --output results.json
+        --extrinsic-file hand_eye_calib.json \\
+        --output ./results
+    Note that the intrinsic file and extrinsic file support single file serving or independent upload
 """
 
 import json
@@ -575,35 +580,22 @@ def parse_arguments():
         epilog="""
 Usage Examples:
 
-1. Same camera, multiple poses (shared intrinsic + individual pose & extrinsic):
-   python 3d_coordinates_estimation.py \\
-       --reference-keypoints ref_keypoints.json \\
-       --reference-pose ref_pose.json \\
-       --keypoint-files view1_tracking.json view2_tracking.json view3_tracking.json \\
-       --pose-files pose1.json pose2.json pose3.json \\
-       --intrinsic-file camera_intrinsic.json \\
-       --extrinsic-files hand_eye_calib.json hand_eye_calib.json hand_eye_calib.json \\
-       --output /path/to/output/directory
+Basic usage with shared camera parameters (most common):
+python 3d_coordinates_estimation.py \\
+    --reference-keypoints ref_keypoints.json \\
+    --reference-pose ref_pose.json \\
+    --keypoint-files view1_tracking.json view2_tracking.json view3_tracking.json \\
+    --pose-files pose1.json pose2.json pose3.json \\
+    --intrinsic-file camera_intrinsic.json \\
+    --extrinsic-file hand_eye_calib.json \\
+    --output ./results
 
-2. Variable camera parameters (individual intrinsic + individual pose & extrinsic):
-   python 3d_coordinates_estimation.py \\
-       --reference-keypoints ref_keypoints.json \\
-       --reference-pose ref_pose.json \\
-       --keypoint-files view1_tracking.json view2_tracking.json view3_tracking.json \\
-       --pose-files pose1.json pose2.json pose3.json \\
-       --intrinsic-files cam1_intrinsic.json cam2_intrinsic.json cam3_intrinsic.json \\
-       --extrinsic-files calib1.json calib2.json calib3.json \\
-       --output ./my_results
+For different camera parameters, use --intrinsic-files and/or --extrinsic-files instead.
 
 Important Notes:
-- Reference keypoints file should contain manually labeled keypoints
-- Reference pose file should contain robot pose when reference image was taken
-- Each keypoint file corresponds to one camera view/pose
-- Each view MUST have its corresponding robot pose file and extrinsic calibration
-- Pose files should contain 'tcp_pose' field with [x, y, z, rx, ry, rz] format
-- Intrinsic can be shared (same camera) OR individual (zoom/parameter changes)
-- --output specifies the directory where results will be saved (auto-generates filename with timestamp)
-- The input order is: reference-keypoints reference-pose keypoint-files pose-files intrinsic extrinsic output
+- At least 2 views required for triangulation
+- Pose files contain robot TCP pose: [x, y, z, rx, ry, rz] 
+- Camera parameters can be shared (one file) or individual (multiple files)
         """
     )
     
@@ -630,11 +622,17 @@ Important Notes:
         required=True,
         help='Paths to robot pose files for each view (one per keypoint file)'
     )
-    parser.add_argument(
+    
+    # Extrinsic parameters (choose one)
+    extrinsic_group = parser.add_mutually_exclusive_group(required=True)
+    extrinsic_group.add_argument(
+        '--extrinsic-file',
+        help='Path to camera extrinsic parameters file (shared for all views - same hand-eye calibration)'
+    )
+    extrinsic_group.add_argument(
         '--extrinsic-files',
         nargs='+',
-        required=True,
-        help='Paths to extrinsic parameter files for each view (one per keypoint file)'
+        help='Paths to individual extrinsic parameter files for each view (different hand-eye calibrations)'
     )
     
     # Intrinsic parameters (choose one)
@@ -669,9 +667,10 @@ def validate_interface_args(args):
                         f"number of keypoint files ({len(args.keypoint_files)})")
     
     # Validate extrinsic parameters count
-    if len(args.extrinsic_files) != len(args.keypoint_files):
-        raise ValueError(f"Number of extrinsic files ({len(args.extrinsic_files)}) must match "
-                        f"number of keypoint files ({len(args.keypoint_files)})")
+    if args.extrinsic_files:
+        if len(args.extrinsic_files) != len(args.keypoint_files):
+            raise ValueError(f"Number of extrinsic files ({len(args.extrinsic_files)}) must match "
+                            f"number of keypoint files ({len(args.keypoint_files)})")
     
     # Validate intrinsic parameters count if individual files specified
     if args.intrinsic_files:
@@ -680,11 +679,15 @@ def validate_interface_args(args):
                             f"number of keypoint files ({len(args.keypoint_files)})")
     
     # Check file existence
-    all_files = [args.reference_keypoints, args.reference_pose] + args.keypoint_files + args.pose_files + args.extrinsic_files
+    all_files = [args.reference_keypoints, args.reference_pose] + args.keypoint_files + args.pose_files
     if args.intrinsic_file:
         all_files.append(args.intrinsic_file)
     if args.intrinsic_files:
         all_files.extend(args.intrinsic_files)
+    if args.extrinsic_file:
+        all_files.append(args.extrinsic_file)
+    if args.extrinsic_files:
+        all_files.extend(args.extrinsic_files)
     
     for file_path in all_files:
         if not Path(file_path).exists():
@@ -694,7 +697,8 @@ def validate_interface_args(args):
     
     # Log the parameter combination being used
     intrinsic_mode = "shared" if args.intrinsic_file else "individual"
-    print(f"📋 Parameter combination: {intrinsic_mode} intrinsic + individual pose & extrinsic (required for triangulation)")
+    extrinsic_mode = "shared" if args.extrinsic_file else "individual"
+    print(f"📋 Parameter combination: {intrinsic_mode} intrinsic + {extrinsic_mode} extrinsic + individual pose (required for triangulation)")
 
 
 def run_estimation(args):
@@ -719,8 +723,11 @@ def run_estimation(args):
         else:
             intrinsic_file = args.intrinsic_files[i]  # Individual
         
-        # Extrinsic file - always individual for triangulation
-        extrinsic_file = args.extrinsic_files[i]
+        # Extrinsic file
+        if args.extrinsic_file:
+            extrinsic_file = args.extrinsic_file  # Shared
+        else:
+            extrinsic_file = args.extrinsic_files[i]  # Individual
         
         view_config = {
             'keypoint_file': keypoint_file,
