@@ -67,19 +67,47 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
     """FlowFormer++ Web API Keypoint Tracker.
     
     This class provides keypoint tracking functionality by communicating with
-    a FlowFormer++ Flask web service via HTTP API calls. It maintains the same
-    interface as FFPPKeypointTracker but uses web API instead of direct model inference.
+    a FlowFormer++ Flask web service via HTTP API calls. It maintains the exact same
+    interface as FFPPKeypointTracker but uses remote web API instead of direct model inference.
     
-    The tracker communicates with a Flask service that should provide these endpoints:
-    - GET /health - Service health check
-    - GET /references - List stored reference images
-    - POST /set_reference - Set reference image with keypoints
-    - POST /track_keypoints - Track keypoints in target image
+    The web API approach enables:
+    - Distributed architectures where tracking runs on a separate server
+    - Avoiding model loading overhead for occasional tracking tasks  
+    - Microservices architectures with centralized GPU resources
+    - Remote tracking capabilities across network boundaries
+    - Easier deployment without local model dependencies
+    
+    Key Interface Methods:
+        set_reference_image(): Upload reference image and keypoints to web service
+        track_keypoints():     Track keypoints via API call with HTTP image upload
+        remove_reference_image(): Remove reference from local tracking
+    
+    Web Service Specific Methods:
+        get_service_health():     Check web service status and availability
+        get_service_references(): List all references stored on server
+    
+    Required Web Service Endpoints:
+        GET  /health         - Service health check and status
+        GET  /references     - List stored reference images with metadata
+        POST /set_reference  - Set reference image with keypoints (multipart upload)
+        POST /track_keypoints - Track keypoints in target image (multipart upload)
     
     Attributes:
-        service_url (str): Base URL of the FlowFormer++ web service
-        timeout (int): Request timeout in seconds
-        session (requests.Session): HTTP session for connection pooling
+        service_url (str): Base URL of the FlowFormer++ web service (default: http://localhost:8001)
+        timeout (int): Request timeout in seconds for HTTP operations (default: 30s)
+        session (requests.Session): HTTP session with connection pooling for efficiency
+        reference_data (dict): Local tracking of references for interface consistency
+        default_reference_key (str): Local default reference key for interface consistency
+        
+    Example:
+        tracker = FFPPWebAPIKeypointTracker(service_url="http://gpu-server:8001")
+        tracker.set_reference_image(ref_image, keypoints, "scene1")
+        result = tracker.track_keypoints(target_image, bidirectional=True)
+        
+    Note:
+        Requires FlowFormer++ web service running and accessible at service_url.
+        Network errors, service errors, and timeouts are handled gracefully.
+        Local reference tracking maintains consistency with base KeypointTracker interface.
     """
     
     def __init__(self, 
@@ -102,21 +130,38 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         # Test service availability
         self._check_service_availability()
     
-    # Public Interface Methods (required by KeypointTracker base class)
+    # ============================================================================
+    # PUBLIC INTERFACE METHODS (required by KeypointTracker base class)
+    # ============================================================================
     
     def set_reference_image(self, 
                            image: np.ndarray,
                            keypoints: Optional[List[Dict]] = None, 
                            image_name: Optional[str] = None) -> Dict:
-        """Set reference image with keypoints using the web API.
+        """Set reference image for keypoint tracking via web API with optional image key.
+        
+        This is the first of two main public methods. Use this to store reference 
+        images with their associated keypoints on the web service for later tracking operations.
+        The image and keypoints are uploaded to the FlowFormer++ web service via HTTP API.
         
         Args:
-            image: Reference image as numpy array (H, W, 3) in RGB format
-            keypoints: List of keypoint dictionaries with 'x', 'y' keys
-            image_name: Optional name for this reference image
+            image: Reference image as numpy array (H, W, 3) in RGB format.
+                  Image will be converted to PNG format for HTTP upload.
+            keypoints: Optional list of keypoint dictionaries with 'x', 'y' keys.
+                      If None, defaults to empty list. Each keypoint should be a dict
+                      like {'x': float, 'y': float} in image pixel coordinates.
+            image_name: Optional string name to identify this reference image on server.
+                       If None, server will assign 'default' and set as default reference.
             
         Returns:
-            Dict with success status and reference image information
+            Dict with success status and information about the set reference image.
+            On success, includes 'key', 'keypoints_count', 'is_default', and 'service_response'.
+            On failure, includes 'error' with detailed error message.
+            
+        Note:
+            The image is automatically converted from numpy array to PNG bytes for upload.
+            Network errors, service errors, and validation errors are handled gracefully.
+            Local reference tracking is updated to maintain consistency with base class interface.
         """
         try:
             # Validate inputs
@@ -199,16 +244,37 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                        reference_name: Optional[str] = None,
                        bidirectional: bool = False,
                        **kwargs) -> Dict:
-        """Track keypoints from reference to target image using the web API.
+        """Track keypoints from stored reference image to target image via web API.
+        
+        This is the second of two main public methods. Use this to track keypoints
+        from a stored reference image to a target image using the FlowFormer++ web service.
+        The target image is uploaded via HTTP API and processed by the remote service.
         
         Args:
-            target_image: Target image as numpy array (H, W, 3) in RGB format
-            reference_name: Name of reference image to use (None for default)
-            bidirectional: Enable bidirectional validation (default: False)
-            **kwargs: Additional arguments (ignored for web API)
+            target_image: Target image as numpy array (H, W, 3) in RGB format.
+                         Image will be converted to PNG format for HTTP upload.
+            reference_name: Name of stored reference image to use on server. If None, uses default reference.
+                           Must match a reference name previously set via set_reference_image().
+            bidirectional: If True, request bidirectional flow validation from service. Tracks keypoints
+                          forward (ref→target) then backward (target→ref) and measures consistency.
+                          Default is False for faster processing.
+            **kwargs: Additional arguments (ignored for web API compatibility with direct tracker).
             
         Returns:
-            Dict with tracking results including tracked keypoints and statistics
+            Dict: Tracking results with success status, tracked keypoints, and statistics.
+                 On success, includes 'tracked_keypoints', 'keypoints_count', 'total_processing_time',
+                 'device_used', and 'service_response'. If bidirectional=True, includes 
+                 'bidirectional_stats' with accuracy metrics for each keypoint.
+                 On failure, includes 'error' with detailed error message.
+        
+        Note:
+            You must call set_reference_image() first to store a reference image with keypoints
+            on the web service before using this function. The target image is automatically
+            converted to PNG bytes for HTTP upload. Network errors and service errors are
+            handled gracefully with detailed error reporting.
+            
+            Bidirectional mode: Service computes ref→target flow, then target→ref flow to validate
+            tracking accuracy. Returns consistency distance for each keypoint via 'bidirectional_stats'.
         """
         try:
             # Check if we have reference images
@@ -283,17 +349,29 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             }
     
     def remove_reference_image(self, image_name: Optional[str] = None) -> Dict:
-        """Remove a stored reference image by name.
+        """Remove a stored reference image by name from local tracking.
         
-        Note: This web API client doesn't directly control server-side reference storage.
-        It only manages local reference tracking. The actual removal would need to be
-        implemented on the server side.
+        This method manages the local client-side reference tracking to maintain
+        consistency with the base KeypointTracker interface. It removes references
+        from the local reference_data dictionary.
         
         Args:
-            image_name: Name of reference image to remove (None for default)
+            image_name: Name of the reference image to remove. If None, removes the default reference image.
+                       Must match a reference name previously set via set_reference_image().
             
         Returns:
-            Dict with removal status
+            Dict with success status and information about the removal operation.
+            On success, includes 'removed_key', 'remaining_count', and 'note' about server-side storage.
+            On failure, includes 'error' with detailed error message.
+            
+        Note:
+            This web API client manages local reference tracking but doesn't directly control
+            server-side reference storage. The actual server-side removal would require additional
+            API endpoints. Server-side references may persist after local removal - use
+            get_service_references() to check server state.
+            
+            Local tracking is updated to maintain interface consistency with direct tracker,
+            including default reference management and remaining reference counting.
         """
         try:
             # Determine which reference to remove
@@ -338,13 +416,29 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                 'error': f"Unexpected error: {str(e)}"
             }
     
-    # Additional Public Methods (service-specific utilities)
+    # ============================================================================
+    # ADDITIONAL PUBLIC METHODS (web service specific utilities)
+    # ============================================================================
     
     def get_service_references(self) -> Dict:
-        """Get reference images stored on the server.
+        """Get reference images stored on the web service server.
+        
+        This web API specific method queries the FlowFormer++ service to retrieve
+        information about all reference images currently stored on the server.
+        Useful for debugging, monitoring, and understanding server state.
         
         Returns:
-            Dict with server-side reference information
+            Dict with server-side reference information and metadata.
+            On success, includes 'server_references' (dict of reference info),
+            'default_reference' (server's default reference name), and 'total_count'.
+            On failure, includes 'error' with detailed error message.
+            
+        Note:
+            Server references may differ from local reference tracking due to:
+            - References set by other clients
+            - Server persistence across client sessions  
+            - Network issues during reference operations
+            This method provides ground truth of server state.
         """
         try:
             response = self.session.get(
@@ -385,10 +479,22 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             }
     
     def get_service_health(self) -> Dict:
-        """Get health status of the FlowFormer++ web service.
+        """Get health status and diagnostics of the FlowFormer++ web service.
+        
+        This web API specific method performs a health check on the remote service,
+        providing real-time status information for monitoring and troubleshooting.
+        Useful for validating service availability before tracking operations.
         
         Returns:
-            Dict with service health information
+            Dict with comprehensive service health information.
+            On success, returns the full service health response including 'status',
+            'message', 'success', and any additional service-specific metadata.
+            On failure, includes 'error' with detailed network or service error information.
+            
+        Note:
+            This is a lightweight operation that tests basic service connectivity
+            and provides service status. Use this method to verify service availability
+            before attempting tracking operations, especially in distributed environments.
         """
         try:
             response = self.session.get(
@@ -420,10 +526,25 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         if hasattr(self, 'session'):
             self.session.close()
     
-    # Private Methods (internal implementation details)
+    # ============================================================================
+    # PRIVATE METHODS (internal implementation details)
+    # ============================================================================
     
     def _check_service_availability(self):
-        """Check if the FlowFormer++ web service is available."""
+        """Check if the FlowFormer++ web service is available and responsive.
+        
+        Internal method called during initialization to verify service connectivity.
+        Performs a quick health check with short timeout to validate the service URL.
+        Provides user feedback about service status during tracker initialization.
+        
+        Returns:
+            bool: True if service is available and healthy, False otherwise.
+            
+        Note:
+            This method prints status messages directly to stdout for immediate user feedback.
+            Uses a short 5-second timeout for quick connectivity testing during init.
+            Network errors and service errors are caught and reported gracefully.
+        """
         try:
             response = self.session.get(f"{self.service_url}/health", timeout=5)
             if response.status_code == 200:
@@ -442,13 +563,23 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             return False
     
     def _numpy_to_pil_bytes(self, image: np.ndarray) -> bytes:
-        """Convert numpy array to PIL Image bytes for upload.
+        """Convert numpy array to PIL Image bytes for HTTP multipart upload.
+        
+        Internal method for preparing image data for web API transmission.
+        Handles data type conversion and PNG encoding for reliable HTTP upload.
         
         Args:
-            image: RGB image as numpy array (H, W, 3)
+            image: RGB image as numpy array (H, W, 3) in any numeric dtype.
+                  Values are automatically normalized to uint8 range if needed.
             
         Returns:
-            Image data as bytes in PNG format
+            bytes: Image data encoded as PNG bytes suitable for HTTP multipart upload.
+                   Uses lossless PNG compression for maintaining image quality.
+                   
+        Note:
+            Automatically converts float images to uint8 by scaling [0,1] → [0,255].
+            Uses PIL for reliable PNG encoding with proper format handling.
+            PNG format chosen for lossless compression and broad compatibility.
         """
         # Ensure image is in the correct format
         if image.dtype != np.uint8:
