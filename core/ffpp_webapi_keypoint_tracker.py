@@ -100,10 +100,11 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         get_service_references(): List all references stored on server
     
     Required Web Service Endpoints:
-        GET  /health         - Service health check and status
-        GET  /references     - List stored reference images with metadata
-        POST /set_reference  - Set reference image with keypoints (JSON with base64 image)
-        POST /track_keypoints - Track keypoints in target image (JSON with base64 image)
+        GET    /health                - Service health check and status
+        GET    /references            - List stored reference images with metadata
+        POST   /set_reference_image   - Set reference image with keypoints (JSON with base64 image)
+        POST   /track_keypoints       - Track keypoints in target image (JSON with base64 image)
+        POST   /remove_reference_image - Remove reference image by name (JSON with image_name)
     
     Attributes:
         service_url (str): Base URL of the FlowFormer++ web service (default: http://localhost:8001)
@@ -199,9 +200,9 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             if image_name:
                 data['image_name'] = image_name
             
-            # Make API call with JSON
+            # Make API call with JSON using tracker-compatible endpoint name
             response = self.session.post(
-                f"{self.service_url}/set_reference",
+                f"{self.service_url}/set_reference_image",
                 json=data,
                 headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
@@ -305,7 +306,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             if reference_name:
                 data['reference_name'] = reference_name
             
-            # Make API call with JSON
+            # Make API call with JSON using tracker-compatible endpoint name
             response = self.session.post(
                 f"{self.service_url}/track_keypoints",
                 json=data,
@@ -355,11 +356,10 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             }
     
     def remove_reference_image(self, image_name: Optional[str] = None) -> Dict:
-        """Remove a stored reference image by name from local tracking.
+        """Remove a stored reference image by name via web API call.
         
-        This method manages the local client-side reference tracking to maintain
-        consistency with the base KeypointTracker interface. It removes references
-        from the local reference_data dictionary.
+        This method removes references from both local tracking and server-side storage
+        by calling the web service's remove_reference_image endpoint.
         
         Args:
             image_name: Name of the reference image to remove. If None, removes the default reference image.
@@ -367,20 +367,16 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             
         Returns:
             Dict with success status and information about the removal operation.
-            On success, includes 'removed_key', 'remaining_count', and 'note' about server-side storage.
+            On success, includes 'removed_key', 'remaining_count', and server response.
             On failure, includes 'error' with detailed error message.
             
         Note:
-            This web API client manages local reference tracking but doesn't directly control
-            server-side reference storage. The actual server-side removal would require additional
-            API endpoints. Server-side references may persist after local removal - use
-            get_service_references() to check server state.
-            
-            Local tracking is updated to maintain interface consistency with direct tracker,
-            including default reference management and remaining reference counting.
+            This method now calls the web service to remove references from server-side storage
+            and updates local tracking accordingly. Both client and server state are synchronized.
+            Network errors and service errors are handled gracefully with detailed error reporting.
         """
         try:
-            # Determine which reference to remove
+            # Determine which reference to remove locally first
             if image_name is None:
                 if self.default_reference_key:
                     key_to_remove = self.default_reference_key
@@ -396,26 +392,55 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             if key_to_remove not in self.reference_data:
                 return {
                     'success': False,
-                    'error': f'Reference image "{key_to_remove}" not found'
+                    'error': f'Reference image "{key_to_remove}" not found in local tracking'
                 }
             
-            # Remove from local tracking
-            del self.reference_data[key_to_remove]
+            # Call web service to remove from server
+            data = {'image_name': key_to_remove}
             
-            # Update default reference if necessary
-            if key_to_remove == self.default_reference_key:
-                if self.reference_data:
-                    self.default_reference_key = next(iter(self.reference_data.keys()))
+            response = self.session.post(
+                f"{self.service_url}/remove_reference_image",
+                json=data,
+                headers={'Content-Type': 'application/json'},
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('success', False):
+                    # Remove from local tracking on successful server removal
+                    del self.reference_data[key_to_remove]
+                    
+                    # Update default reference if necessary
+                    if key_to_remove == self.default_reference_key:
+                        if self.reference_data:
+                            self.default_reference_key = next(iter(self.reference_data.keys()))
+                        else:
+                            self.default_reference_key = None
+                    
+                    return {
+                        'success': True,
+                        'removed_key': key_to_remove,
+                        'remaining_count': len(self.reference_data),
+                        'server_response': result.get('data', {}),
+                        'note': 'Reference removed from both local tracking and server storage.'
+                    }
                 else:
-                    self.default_reference_key = None
-            
+                    return {
+                        'success': False,
+                        'error': f"Server error: {result.get('message', 'Unknown error')}"
+                    }
+            else:
+                return {
+                    'success': False,
+                    'error': f"HTTP error {response.status_code}: {response.text}"
+                }
+                
+        except requests.exceptions.RequestException as e:
             return {
-                'success': True,
-                'removed_key': key_to_remove,
-                'remaining_count': len(self.reference_data),
-                'note': 'Local reference tracking updated. Server-side storage may still contain the reference.'
+                'success': False,
+                'error': f"Network error: {str(e)}"
             }
-            
         except Exception as e:
             return {
                 'success': False,
@@ -606,58 +631,3 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         
         return image_base64
 
-
-def main():
-    """Example usage of the FFPPWebAPIKeypointTracker."""
-    import numpy as np
-    from pathlib import Path
-    
-    print("🔗 FlowFormer++ Web API Keypoint Tracker Test")
-    print("=" * 50)
-    
-    # Initialize tracker
-    tracker = FFPPWebAPIKeypointTracker()
-    
-    # Check service health
-    health = tracker.get_service_health()
-    print(f"Service Health: {health}")
-    
-    # Create test data
-    ref_image = np.random.randint(0, 255, (300, 400, 3), dtype=np.uint8)
-    target_image = np.random.randint(0, 255, (300, 400, 3), dtype=np.uint8)
-    
-    keypoints = [
-        {'x': 100, 'y': 150},
-        {'x': 200, 'y': 200},
-        {'x': 300, 'y': 100}
-    ]
-    
-    print("\n🎯 Testing API tracking workflow...")
-    
-    # Set reference image
-    print("1. Setting reference image...")
-    result = tracker.set_reference_image(ref_image, keypoints, "test_ref")
-    print(f"   Result: {result.get('success')} - {result.get('keypoints_count', 0)} keypoints")
-    
-    if result.get('success'):
-        # Track keypoints
-        print("2. Tracking keypoints...")
-        result = tracker.track_keypoints(target_image, bidirectional=True)
-        print(f"   Result: {result.get('success')} - {result.get('keypoints_count', 0)} tracked")
-        print(f"   Processing time: {result.get('total_processing_time', 0):.2f}s")
-        
-        # Check server references
-        print("3. Checking server references...")
-        refs = tracker.get_service_references()
-        print(f"   Server references: {refs}")
-        
-        # Clean up
-        print("4. Removing reference...")
-        result = tracker.remove_reference_image("test_ref")
-        print(f"   Result: {result}")
-    
-    print("\n✅ Test completed!")
-
-
-if __name__ == "__main__":
-    main()

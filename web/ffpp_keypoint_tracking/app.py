@@ -158,11 +158,14 @@ def service_info():
             <p class="status">Status: {'✅ Ready' if tracker_initialized else '❌ Not Initialized'}</p>
             <p><strong>FlowFormer++ Integration</strong> - High-performance keypoint tracking</p>
             
-            <h2>Available Endpoints:</h2>
+            <h2>Tracker-Compatible Endpoints:</h2>
+            <div class="endpoint"><strong>POST /set_reference_image</strong> - Set reference image with keypoints</div>
+            <div class="endpoint"><strong>POST /track_keypoints</strong> - Track keypoints using FlowFormer++</div>
+            <div class="endpoint"><strong>POST /remove_reference_image</strong> - Remove reference image by name</div>
+            
+            <h2>Service Endpoints:</h2>
             <div class="endpoint"><strong>GET /health</strong> - Service health check</div>
             <div class="endpoint"><strong>GET /references</strong> - List stored reference images</div>
-            <div class="endpoint"><strong>POST /set_reference</strong> - Set reference image with keypoints</div>
-            <div class="endpoint"><strong>POST /track_keypoints</strong> - Track keypoints using FlowFormer++</div>
             
             <h2>Documentation:</h2>
             <p><a href="/docs">📖 Interactive API Documentation (Swagger)</a></p>
@@ -228,7 +231,12 @@ def list_references():
         }
     ))
 
-@app.route("/set_reference", methods=["POST"])
+# ============================================================================
+# TRACKER-COMPATIBLE ENDPOINTS
+# These provide the exact same method names as the tracker interface
+# ============================================================================
+
+@app.route("/set_reference_image", methods=["POST"])
 def set_reference_image():
     """Set reference image with keypoints using real FlowFormer++ tracker."""
     if not tracker_initialized:
@@ -310,7 +318,7 @@ def set_reference_image():
             message=f"Invalid keypoints JSON: {str(e)}"
         )), 400
     except Exception as e:
-        logger.error(f"Error in set_reference: {str(e)}")
+        logger.error(f"Error in set_reference_image: {str(e)}")
         logger.error(traceback.format_exc())
         return jsonify(create_api_response(
             success=False,
@@ -330,7 +338,7 @@ def track_keypoints():
     if not hasattr(tracker, 'reference_data') or not tracker.reference_data:
         return jsonify(create_api_response(
             success=False,
-            message="No reference images available. Use /set_reference endpoint first."
+            message="No reference images available. Use /set_reference_image endpoint first."
         )), 400
     
     try:
@@ -393,6 +401,104 @@ def track_keypoints():
             message=f"Error: {str(e)}"
         )), 500
 
+@app.route("/remove_reference_image", methods=["POST", "DELETE"])
+def remove_reference_image():
+    """Remove a stored reference image by name.
+    
+    This endpoint provides server-side reference removal to match the tracker interface.
+    Accepts both POST and DELETE methods for flexibility.
+    """
+    if not tracker_initialized:
+        return jsonify(create_api_response(
+            success=False,
+            message="Tracker not initialized. Check /health endpoint."
+        )), 503
+    
+    try:
+        # Handle both JSON and query parameters
+        image_name = None
+        
+        if request.method == "POST" and request.is_json:
+            data = request.get_json()
+            image_name = data.get('image_name')
+        elif request.method == "DELETE":
+            image_name = request.args.get('image_name')
+        else:
+            return jsonify(create_api_response(
+                success=False,
+                message="Use POST with JSON body or DELETE with query parameter"
+            )), 400
+        
+        # Use tracker's remove method if available
+        if hasattr(tracker, 'remove_reference_image'):
+            result = tracker.remove_reference_image(image_name)
+            
+            if result.get('success', False):
+                return jsonify(create_api_response(
+                    success=True,
+                    message=f"Reference image removed successfully",
+                    data={
+                        "removed_key": result.get('removed_key'),
+                        "remaining_count": result.get('remaining_references', 0)
+                    }
+                ))
+            else:
+                return jsonify(create_api_response(
+                    success=False,
+                    message=f"Failed to remove reference: {result.get('error', 'Unknown error')}"
+                )), 404
+        else:
+            # Fallback: manual reference management
+            if not hasattr(tracker, 'reference_data'):
+                return jsonify(create_api_response(
+                    success=False,
+                    message="No reference storage available"
+                )), 503
+            
+            # Determine which reference to remove
+            if image_name is None:
+                if hasattr(tracker, 'default_reference_key') and tracker.default_reference_key:
+                    key_to_remove = tracker.default_reference_key
+                else:
+                    return jsonify(create_api_response(
+                        success=False,
+                        message="No default reference image to remove"
+                    )), 404
+            else:
+                key_to_remove = image_name
+            
+            # Check if reference exists
+            if key_to_remove not in tracker.reference_data:
+                return jsonify(create_api_response(
+                    success=False,
+                    message=f"Reference image '{key_to_remove}' not found"
+                )), 404
+            
+            # Remove reference
+            del tracker.reference_data[key_to_remove]
+            
+            # Update default reference if necessary
+            if hasattr(tracker, 'default_reference_key') and key_to_remove == tracker.default_reference_key:
+                if tracker.reference_data:
+                    tracker.default_reference_key = next(iter(tracker.reference_data.keys()))
+                else:
+                    tracker.default_reference_key = None
+            
+            return jsonify(create_api_response(
+                success=True,
+                message=f"Reference image removed successfully",
+                data={
+                    "removed_key": key_to_remove,
+                    "remaining_count": len(tracker.reference_data)
+                }
+            ))
+        
+    except Exception as e:
+        return jsonify(create_api_response(
+            success=False,
+            message=f"Error removing reference: {str(e)}"
+        )), 500
+
 @app.route("/docs")
 def api_docs():
     """Simple API documentation."""
@@ -406,11 +512,14 @@ def api_docs():
             .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
             .method { font-weight: bold; color: #0066cc; }
             .method.post { color: #ff6600; }
+            .method.delete { color: #cc0066; }
+            .tracker-compatible { border-left: 4px solid #00cc66; }
         </style>
     </head>
     <body>
         <h1>FlowFormer++ Keypoint Tracking API</h1>
         
+        <h2>Service Endpoints</h2>
         <div class="endpoint">
             <div class="method">GET /</div>
             <p>Service information page</p>
@@ -426,17 +535,27 @@ def api_docs():
             <p>List all stored reference images</p>
         </div>
         
-        <div class="endpoint">
-            <div class="method post">POST /set_reference</div>
+        <h2>Tracking Endpoints</h2>
+        <div class="endpoint tracker-compatible">
+            <div class="method post">POST /set_reference_image</div>
             <p>Set reference image with keypoints</p>
             <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "keypoints": [...], "image_name": "optional"}</p>
         </div>
         
-        <div class="endpoint">
+        <div class="endpoint tracker-compatible">
             <div class="method post">POST /track_keypoints</div>
             <p>Track keypoints using FlowFormer++ model</p>
             <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "reference_name": "optional", "bidirectional": false}</p>
         </div>
+        
+        <div class="endpoint tracker-compatible">
+            <div class="method post">POST /remove_reference_image</div>
+            <div class="method delete">DELETE /remove_reference_image</div>
+            <p>Remove reference image by name</p>
+            <p><strong>POST JSON:</strong> {"image_name": "optional"} or <strong>DELETE Query:</strong> ?image_name=name</p>
+        </div>
+        
+
         
         <div class="endpoint">
             <div class="method">GET /docs</div>
