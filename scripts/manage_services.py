@@ -60,8 +60,6 @@ class ServiceManager:
                     print(f"❌ Service launcher not found: {launcher_file}")
                     return False
                 
-
-                
                 # Start the static web service
                 process = subprocess.Popen([
                     sys.executable, str(launcher_file.absolute()),
@@ -84,6 +82,7 @@ class ServiceManager:
                     sys.executable, str(app_file)
                 ], cwd=str(service_path))
             
+            # Track the process for both service types
             self.running_processes[service_name] = process
             print(f"✅ {service_info['name']} started with PID {process.pid}")
             return True
@@ -140,17 +139,30 @@ class ServiceManager:
     
     def stop_all_services(self):
         """Stop all running services."""
+        if not self.running_processes:
+            print("🛑 No running services to stop")
+            return
+            
         print("🛑 Stopping all services...")
+        print(f"📊 Found {len(self.running_processes)} running services: {list(self.running_processes.keys())}")
         
         for service_name, process in self.running_processes.items():
             try:
                 print(f"Stopping {service_name}...")
-                process.terminate()
-                process.wait(timeout=5)
-                print(f"✅ {service_name} stopped")
+                if process.poll() is None:  # Process is still running
+                    process.terminate()
+                    process.wait(timeout=5)
+                    print(f"✅ {service_name} stopped")
+                else:
+                    print(f"ℹ️ {service_name} was already stopped")
             except subprocess.TimeoutExpired:
                 print(f"⚠️ Force killing {service_name}...")
                 process.kill()
+                try:
+                    process.wait(timeout=2)
+                    print(f"✅ {service_name} force stopped")
+                except subprocess.TimeoutExpired:
+                    print(f"❌ Failed to stop {service_name}")
             except Exception as e:
                 print(f"❌ Error stopping {service_name}: {e}")
         
