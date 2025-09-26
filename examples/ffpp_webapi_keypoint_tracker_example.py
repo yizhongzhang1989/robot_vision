@@ -33,13 +33,16 @@ Prerequisites:
 - Sample data in sample_data/flow_image_pair/
 
 Configuration:
-- Edit WEB_SERVICE_URL at the top of this script to change server location
+- Edit WEB_SERVICE_URL at the top of this script to change default server location
+- Or use --url argument to specify server URL from command line
 - Examples: "http://192.168.1.100:8001", "http://gpu-server:8001"
 
 Usage:
-    python examples/ffpp_webapi_keypoint_tracker_example.py              # Run full test suite
-    python examples/ffpp_webapi_keypoint_tracker_example.py --service    # Check service only
-    python examples/ffpp_webapi_keypoint_tracker_example.py -s           # Check service (short)
+    python examples/ffpp_webapi_keypoint_tracker_example.py                           # Run full test suite
+    python examples/ffpp_webapi_keypoint_tracker_example.py --service                 # Check service only
+    python examples/ffpp_webapi_keypoint_tracker_example.py -s                        # Check service (short)
+    python examples/ffpp_webapi_keypoint_tracker_example.py --url http://server:8001  # Use custom URL
+    python examples/ffpp_webapi_keypoint_tracker_example.py -u http://gpu-server:8001 # Use custom URL (short)
 """
 
 import os
@@ -879,7 +882,17 @@ def main():
     parser = argparse.ArgumentParser(description='FFPPWebAPIKeypointTracker Example & Test Suite')
     parser.add_argument('--service', '-s', action='store_true', 
                         help='Check service availability only')
+    parser.add_argument('--url', '-u', type=str, 
+                        help='FlowFormer++ web service URL (overrides WEB_SERVICE_URL)')
     args = parser.parse_args()
+    
+    # Use provided URL if specified, otherwise use the configured URL
+    global WEB_SERVICE_URL
+    if args.url:
+        WEB_SERVICE_URL = args.url
+        print(f"🔧 Using provided service URL: {WEB_SERVICE_URL}")
+    else:
+        print(f"🔧 Using configured service URL: {WEB_SERVICE_URL}")
     
     print("🌐 FFPPWebAPIKeypointTracker Example & Test Suite 🌐")
     print("=" * 60)
