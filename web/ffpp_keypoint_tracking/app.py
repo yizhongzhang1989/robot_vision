@@ -16,7 +16,6 @@ import traceback
 import base64
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify
-from werkzeug.datastructures import FileStorage
 import numpy as np
 from PIL import Image
 import io
@@ -100,31 +99,6 @@ def decode_base64_image(image_base64: str) -> np.ndarray:
     except Exception as e:
         raise ValueError(f"Failed to decode base64 image: {str(e)}")
 
-def encode_image_to_base64(image_np: np.ndarray) -> str:
-    """Encode numpy image array to base64 PNG string.
-    
-    Uses lossless PNG compression to ensure exact pixel preservation
-    for accurate optical flow computation.
-    """
-    try:
-        # Ensure image is in the correct format
-        if image_np.dtype != np.uint8:
-            image_np = (image_np * 255).astype(np.uint8)
-        
-        # Convert to PIL Image
-        pil_image = Image.fromarray(image_np, 'RGB')
-        
-        # Convert to PNG bytes with lossless compression
-        img_bytes = io.BytesIO()
-        pil_image.save(img_bytes, format='PNG', optimize=True)
-        img_bytes.seek(0)
-        
-        # Encode to base64
-        image_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
-        return image_base64
-    except Exception as e:
-        raise ValueError(f"Failed to encode image to base64: {str(e)}")
-
 def encode_numpy_array_to_base64(array: np.ndarray) -> Dict:
     """Encode numpy array to base64 string with metadata for exact reconstruction.
     
@@ -148,46 +122,6 @@ def encode_numpy_array_to_base64(array: np.ndarray) -> Dict:
         }
     except Exception as e:
         raise ValueError(f"Failed to encode numpy array to base64: {str(e)}")
-
-def decode_numpy_array_from_base64(encoded_data: Dict) -> np.ndarray:
-    """Decode numpy array from base64 string with metadata.
-    
-    Args:
-        encoded_data: Dict with 'data' (base64), 'shape', 'dtype'
-        
-    Returns:
-        Reconstructed NumPy array
-    """
-    try:
-        # Decode base64 to bytes
-        array_bytes = base64.b64decode(encoded_data['data'])
-        
-        # Reconstruct array with original shape and dtype
-        array = np.frombuffer(array_bytes, dtype=encoded_data['dtype'])
-        array = array.reshape(encoded_data['shape'])
-        
-        return array
-    except Exception as e:
-        raise ValueError(f"Failed to decode numpy array from base64: {str(e)}")
-
-def load_image_from_upload(file: FileStorage) -> np.ndarray:
-    """Load image from uploaded file and convert to numpy array."""
-    try:
-        # Read image file
-        image_data = file.read()
-        image = Image.open(io.BytesIO(image_data))
-        
-        # Convert to RGB if needed
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Convert to numpy array
-        image_np = np.array(image)
-        return image_np
-    except Exception as e:
-        raise ValueError(f"Failed to load image: {str(e)}")
-    finally:
-        file.seek(0)  # Reset file pointer for potential reuse
 
 @app.route("/")
 def service_info():
