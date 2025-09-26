@@ -29,8 +29,12 @@ Output Location:
 - Includes visualizations, JSON data, and performance benchmarks
 
 Prerequisites:
-- FlowFormer++ web service running on http://localhost:8001
+- FlowFormer++ web service running (default: http://localhost:8001)
 - Sample data in sample_data/flow_image_pair/
+
+Configuration:
+- Edit WEB_SERVICE_URL at the top of this script to change server location
+- Examples: "http://192.168.1.100:8001", "http://gpu-server:8001"
 
 Usage:
     python examples/ffpp_webapi_keypoint_tracker_example.py              # Run full test suite
@@ -50,6 +54,15 @@ import argparse
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core.ffpp_webapi_keypoint_tracker import FFPPWebAPIKeypointTracker
+
+# =============================================================================
+# CONFIGURATION - Change this URL to match your FlowFormer++ web service
+# =============================================================================
+WEB_SERVICE_URL = "http://localhost:8001"  # Change this for remote servers
+# Examples:
+# WEB_SERVICE_URL = "http://192.168.1.100:8001"  # Remote server
+# WEB_SERVICE_URL = "http://gpu-server:8001"      # Server by hostname  
+# WEB_SERVICE_URL = "http://localhost:8002"       # Different port
 
 
 def smooth_color_transition(value):
@@ -134,11 +147,11 @@ def check_service_availability():
     }
     
     print(f"🌐 Web Service Connectivity Check:")
-    print(f"   Service URL: http://localhost:8001")
+    print(f"   Service URL: {WEB_SERVICE_URL}")
     
     try:
         # Try to create tracker (this will test connectivity)
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
         
         # Get detailed health information
         health = tracker.get_service_health()
@@ -240,7 +253,7 @@ def test_basic_tracking():
     init_start_time = time.time()
     
     try:
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
         init_elapsed_time = time.time() - init_start_time
         
         print(f"✅ FFPPWebAPIKeypointTracker initialized")
@@ -367,7 +380,7 @@ def test_bidirectional_validation():
     print("\n🚀 Initializing tracker...")
     
     try:
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
     except Exception as e:
         print(f"❌ Failed to initialize tracker: {e}")
         return False
@@ -522,7 +535,7 @@ def test_multiple_references():
     print("\n🚀 Initializing tracker...")
     
     try:
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
     except Exception as e:
         print(f"❌ Failed to initialize tracker: {e}")
         return False
@@ -638,7 +651,7 @@ def test_service_features():
     print("=" * 50)
     
     try:
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
     except Exception as e:
         print(f"❌ Failed to initialize tracker: {e}")
         return False
@@ -715,7 +728,7 @@ def run_performance_benchmark():
     target_img, ref_img, ref_keypoints = data_result
     
     try:
-        tracker = FFPPWebAPIKeypointTracker()
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
     except Exception as e:
         print(f"❌ Failed to initialize tracker: {e}")
         return False
