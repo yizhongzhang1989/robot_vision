@@ -15,7 +15,8 @@ Code Structure:
 - run_performance_benchmark(): Performance comparison between modes
 
 Features demonstrated:
-- CUDA device detection and information display
+- CUDA device detectioif __name__ == "__main__":
+    main()n display
 - Basic keypoint tracking with stored references
 - Multiple reference image management  
 - Bidirectional flow validation for accuracy assessment
@@ -32,7 +33,6 @@ Usage:
     python examples/ffpp_keypoint_tracker_example.py -d          # Check CUDA devices (short)
 """
 
-import sys
 import os
 import cv2
 import json
@@ -41,6 +41,7 @@ import time
 import torch
 
 # Add the parent directory to the path to import core modules
+import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core.ffpp_keypoint_tracker import FFPPKeypointTracker
@@ -748,18 +749,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Check if user wants to see only device info
-    if len(sys.argv) > 1 and sys.argv[1] in ['--devices', '-d', '--cuda']:
-        print("🔧 CUDA Device Detection Tool")
-        print("=" * 40)
-        device_info = list_cuda_devices()
-        
-        # Print summary
-        if device_info['cuda_available']:
-            print(f"Summary: {device_info['device_count']} CUDA device(s) available")
-            print(f"Recommended for FFPPKeypointTracker: ✅ GPU acceleration enabled")
-        else:
-            print("Summary: No CUDA devices available")
-            print("Recommended for FFPPKeypointTracker: ⚠️ CPU-only mode (slower)")
-    else:
-        main()
+    main()
