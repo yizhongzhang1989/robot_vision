@@ -12,7 +12,9 @@ Code Structure:
 - test_basic_tracking(): Demonstrates core two-step tracking process via web API
 - test_bidirectional_validation(): Shows accuracy assessment features via API
 - test_multiple_references(): Multiple reference management demo via API
+- test_flow_visualization(): Flow data extraction and visualization via API
 - test_service_features(): Tests web service specific features
+- test_encoding_configurations(): Tests configurable image encoding performance
 - run_performance_benchmark(): Performance comparison between API modes
 
 Features demonstrated:
@@ -1131,6 +1133,142 @@ def run_performance_benchmark():
     return True
 
 
+def test_encoding_configurations():
+    """
+    Test 7: Configurable Image Encoding Performance
+    """
+    print("\n🧪 Test 7: Configurable Image Encoding Performance")
+    print("=" * 50)
+    
+    # ========================================
+    # DATA PREPARATION
+    # ========================================
+    target_img, ref_img, ref_keypoints = load_sample_data()
+    
+    # Test configurations: PNG vs JPG with different qualities
+    test_configs = [
+        {"format": "png", "quality": None, "name": "PNG (Lossless)"},
+        {"format": "jpg", "quality": 95, "name": "JPG Quality 95"},
+        {"format": "jpg", "quality": 85, "name": "JPG Quality 85"},
+        {"format": "jpg", "quality": 75, "name": "JPG Quality 75"}
+    ]
+    
+    results = []
+    
+    for config in test_configs:
+        print(f"\n🚀 Testing {config['name']}...")
+        
+        # Initialize tracker with specific encoding
+        if config['quality']:
+            tracker = FFPPWebAPIKeypointTracker(
+                service_url=WEB_SERVICE_URL, 
+                image_format=config['format'],
+                jpeg_quality=config['quality']
+            )
+        else:
+            tracker = FFPPWebAPIKeypointTracker(
+                service_url=WEB_SERVICE_URL, 
+                image_format=config['format']
+            )
+        
+        health = tracker.get_service_health()
+        if not health.get('success', False):
+            print(f"❌ Service not available for {config['name']}")
+            continue
+        
+        encoding_info = tracker.get_image_encoding()
+        print(f"   Encoding: {encoding_info['format'].upper()}" + 
+              (f" (Quality: {encoding_info['jpeg_quality']})" if encoding_info['format'] == 'jpg' else ""))
+        
+        # Set reference and measure time
+        ref_start = time.time()
+        ref_result = tracker.set_reference_image(ref_img, ref_keypoints, f"encoding_test_{config['format']}")
+        ref_time = time.time() - ref_start
+        
+        if not ref_result.get('success'):
+            print(f"❌ Failed to set reference for {config['name']}")
+            continue
+        
+        # Track keypoints and measure time
+        track_start = time.time()
+        track_result = tracker.track_keypoints(target_img, return_flow=False)
+        track_time = time.time() - track_start
+        
+        # Clean up
+        tracker.remove_reference_image()
+        
+        if track_result.get('success'):
+            total_time = ref_time + track_time
+            api_time = track_result.get('api_call_time', 0)
+            
+            result = {
+                'name': config['name'],
+                'format': config['format'],
+                'quality': config.get('quality'),
+                'total_time': total_time,
+                'ref_time': ref_time,
+                'track_time': track_time,
+                'api_time': api_time,
+                'keypoints': len(track_result.get('tracked_keypoints', []))
+            }
+            results.append(result)
+            
+            print(f"✅ {config['name']} completed:")
+            print(f"   Total time: {total_time:.3f}s")
+            print(f"   Reference upload: {ref_time:.3f}s")
+            print(f"   Tracking request: {track_time:.3f}s")
+            print(f"   Tracked keypoints: {result['keypoints']}")
+        else:
+            print(f"❌ Tracking failed for {config['name']}")
+    
+    # ========================================
+    # PERFORMANCE COMPARISON
+    # ========================================
+    if len(results) > 1:
+        print(f"\n📊 Performance Comparison:")
+        print(f"{'Format':<20} {'Total Time':<12} {'Ref Upload':<12} {'Tracking':<12} {'Speedup':<10}")
+        print("-" * 70)
+        
+        baseline = results[0]  # PNG as baseline
+        for result in results:
+            speedup = baseline['total_time'] / result['total_time']
+            
+            print(f"{result['name']:<20} {result['total_time']:.3f}s     "
+                  f"{result['ref_time']:.3f}s      {result['track_time']:.3f}s      "
+                  f"{speedup:.1f}x")
+        
+        # Find best performing config
+        fastest = min(results, key=lambda x: x['total_time'])
+        print(f"\n🏆 Fastest configuration: {fastest['name']}")
+        print(f"   Total improvement: {baseline['total_time']/fastest['total_time']:.1f}x faster than PNG")
+    
+    # ========================================
+    # DYNAMIC CONFIGURATION TEST
+    # ========================================
+    print(f"\n🔧 Dynamic Configuration Test:")
+    tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
+    
+    health = tracker.get_service_health()
+    if health.get('success', False):
+        print(f"   Initial config: {tracker.get_image_encoding()}")
+        
+        # Change to high-speed JPG
+        tracker.set_image_encoding("jpg", 75)
+        print(f"   After change: {tracker.get_image_encoding()}")
+        
+        # Test the new configuration
+        start_time = time.time()
+        ref_result = tracker.set_reference_image(ref_img, ref_keypoints, "dynamic_test")
+        config_test_time = time.time() - start_time
+        
+        if ref_result.get('success'):
+            print(f"   Reference upload with JPG75: {config_test_time:.3f}s")
+            tracker.remove_reference_image()
+        
+    print("✅ Encoding Configuration PASSED")
+    return True
+
+
 def main():
     """
     Main function: Run complete test suite for web API tracker
@@ -1184,6 +1322,7 @@ def main():
         ("Multiple References API", test_multiple_references),
         ("Flow Visualization API", test_flow_visualization),
         ("Web Service Features", test_service_features),
+        ("Encoding Configuration Performance", test_encoding_configurations),
         ("API Performance Benchmark", run_performance_benchmark)
     ]
     

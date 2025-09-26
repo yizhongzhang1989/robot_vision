@@ -107,6 +107,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
     - Microservices architectures with centralized GPU resources
     - Remote tracking capabilities across network boundaries
     - Easier deployment without local model dependencies
+    - Configurable image encoding (PNG/JPG) for speed vs accuracy tradeoffs
     
     Key Interface Methods:
         set_reference_image(): Upload reference image and keypoints to web service
@@ -145,18 +146,38 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
     def __init__(self, 
                  service_url: str = "http://localhost:8001",
                  timeout: int = 30,
+                 image_format: str = "png",
+                 jpeg_quality: int = 95,
                  **kwargs):
         """Initialize the FlowFormer++ Web API keypoint tracker.
         
         Args:
             service_url: Base URL of the FlowFormer++ web service (default: http://localhost:8001)
             timeout: Request timeout in seconds (default: 30)
+            image_format: Image encoding format ('png' or 'jpg').
+                         'png' = lossless but slower, 'jpg' = lossy but faster.
+                         Default: 'png'
+            jpeg_quality: JPEG quality (1-100) when using JPG format.
+                         Higher values = better quality but larger size.
+                         Default: 95
             **kwargs: Additional arguments passed to base class
         """
         super().__init__(**kwargs)
         
         self.service_url = service_url.rstrip('/')
         self.timeout = timeout
+        
+        # Configure image encoding
+        self.image_format = image_format.lower()
+        self.jpeg_quality = max(1, min(100, jpeg_quality))
+        
+        if self.image_format not in ['png', 'jpg', 'jpeg']:
+            raise ValueError(f"Unsupported image format: {image_format}. Use 'png' or 'jpg'.")
+        
+        # Normalize jpeg format name
+        if self.image_format == 'jpeg':
+            self.image_format = 'jpg'
+            
         self.session = requests.Session()
         
         # Test service availability
@@ -208,7 +229,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                 }
             
             # Prepare JSON data with base64 encoded image (lossless PNG)
-            image_base64 = self._numpy_to_base64_png(image)
+            image_base64 = self._numpy_to_base64_image(image)
             
             data = {
                 'image_base64': image_base64,
@@ -322,7 +343,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                 }
             
             # Prepare JSON data with base64 encoded image (lossless PNG)
-            image_base64 = self._numpy_to_base64_png(target_image)
+            image_base64 = self._numpy_to_base64_image(target_image)
             
             data = {
                 'image_base64': image_base64,
@@ -651,24 +672,58 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             print(f"❌ Cannot connect to FlowFormer++ Web API service at {self.service_url}: {e}")
             return False
     
-    def _numpy_to_base64_png(self, image: np.ndarray) -> str:
-        """Convert numpy array to base64 encoded PNG string for JSON transmission.
+    def set_image_encoding(self, image_format: str, jpeg_quality: int = None):
+        """Configure image encoding format and quality.
         
-        Internal method for preparing lossless image data for web API JSON transmission.
-        Uses PNG format to ensure exact pixel preservation for accurate flow computation.
+        Args:
+            image_format: Image format ('png' or 'jpg').
+                         'png' = lossless but slower, 'jpg' = lossy but faster.
+            jpeg_quality: JPEG quality (1-100) when using JPG format.
+                         If None, keeps current quality setting.
+                         
+        Raises:
+            ValueError: If image_format is not supported.
+        """
+        image_format = image_format.lower()
+        if image_format == 'jpeg':
+            image_format = 'jpg'
+            
+        if image_format not in ['png', 'jpg']:
+            raise ValueError(f"Unsupported image format: {image_format}. Use 'png' or 'jpg'.")
+            
+        self.image_format = image_format
+        if jpeg_quality is not None:
+            self.jpeg_quality = max(1, min(100, jpeg_quality))
+    
+    def get_image_encoding(self) -> Dict[str, Union[str, int]]:
+        """Get current image encoding configuration.
+        
+        Returns:
+            Dict with keys: 'format' (str), 'jpeg_quality' (int)
+        """
+        return {
+            'format': self.image_format,
+            'jpeg_quality': self.jpeg_quality
+        }
+    
+    def _numpy_to_base64_image(self, image: np.ndarray) -> str:
+        """Convert numpy array to base64 encoded image string for JSON transmission.
+        
+        Internal method for preparing image data for web API JSON transmission.
+        Format and quality are controlled by instance configuration.
         
         Args:
             image: RGB image as numpy array (H, W, 3) in any numeric dtype.
                   Values are automatically normalized to uint8 range if needed.
             
         Returns:
-            str: Image data encoded as base64 PNG string suitable for JSON transmission.
-                 Uses lossless PNG compression to preserve exact pixel values.
+            str: Image data encoded as base64 string suitable for JSON transmission.
+                 Format depends on self.image_format setting.
                    
         Note:
+            - PNG: Lossless compression, exact pixel preservation, slower transmission
+            - JPG: Lossy compression, faster transmission, configurable quality
             Automatically converts float images to uint8 by scaling [0,1] → [0,255].
-            Uses PIL for reliable PNG encoding with lossless compression.
-            PNG format ensures no compression artifacts affect optical flow computation.
             Base64 encoding allows binary data to be included in JSON payloads.
         """
         # Ensure image is in the correct format
@@ -678,15 +733,30 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         # Convert to PIL Image
         pil_image = Image.fromarray(image, 'RGB')
         
-        # Convert to PNG bytes with lossless compression
+        # Save to bytes buffer with configured format
         img_bytes = io.BytesIO()
-        pil_image.save(img_bytes, format='PNG', optimize=True)
+        if self.image_format == 'png':
+            pil_image.save(img_bytes, format='PNG', optimize=True)
+        else:  # jpg
+            pil_image.save(img_bytes, format='JPEG', quality=self.jpeg_quality, optimize=True)
         img_bytes.seek(0)
         
         # Encode to base64 string
         image_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
         
         return image_base64
+    
+    def _numpy_to_base64_png(self, image: np.ndarray) -> str:
+        """Legacy method for PNG encoding - redirects to configurable method.
+        
+        DEPRECATED: Use _numpy_to_base64_image() instead.
+        Maintained for backward compatibility.
+        """
+        old_format = self.image_format
+        self.image_format = 'png'
+        result = self._numpy_to_base64_image(image)
+        self.image_format = old_format
+        return result
     
     def _decode_numpy_array_from_base64(self, encoded_data: Dict) -> np.ndarray:
         """Decode base64 encoded numpy array back to original numpy array.
