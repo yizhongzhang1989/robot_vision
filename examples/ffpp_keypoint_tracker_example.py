@@ -13,6 +13,7 @@ Code Structure:
 - test_bidirectional_validation(): Shows accuracy assessment features
 - test_multiple_references(): Multiple reference management demo
 - test_resolution_scaling(): Tests tracking across different image resolutions
+- test_flow_visualization(): Extracts and visualizes raw optical flow data
 - run_performance_benchmark(): Performance comparison between modes
 
 Features demonstrated:
@@ -746,6 +747,218 @@ def test_resolution_scaling():
     return True
 
 
+def test_flow_visualization():
+    """
+    Test 5: Flow visualization with bidirectional flow
+    
+    This test demonstrates extracting and visualizing raw optical flow data
+    from the tracker. Tests both forward and reverse flow visualization
+    using bidirectional flow computation.
+    """
+    print("\n🧪 Test 5: Flow Visualization")
+    print("=" * 50)
+    
+    # ========================================
+    # DATA PREPARATION
+    # ========================================
+    target_img, ref_img, ref_keypoints = load_sample_data()
+    
+    print(f"✅ Loaded images: ref {ref_img.shape}, target {target_img.shape}")
+    print(f"✅ Reference keypoints: {len(ref_keypoints)}")
+    
+    # ========================================
+    # TRACKER INITIALIZATION
+    # ========================================
+    print("\n🚀 Initializing tracker...")
+    tracker = FFPPKeypointTracker()
+    
+    if not tracker.model_loaded:
+        print("❌ Failed to load model")
+        return False
+    
+    # ========================================
+    # FLOW COMPUTATION AND VISUALIZATION
+    # ========================================
+    print("\n🎯 Step 1: Setting reference image...")
+    ref_result = tracker.set_reference_image(ref_img, ref_keypoints)
+    
+    if not ref_result['success']:
+        print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Reference image set with {ref_result['keypoints_count']} keypoints")
+    
+    print("\n🎯 Step 2: Computing bidirectional flow with return_flow=True...")
+    start_time = time.time()
+    result = tracker.track_keypoints(target_img, bidirectional=True, return_flow=True)
+    elapsed_time = time.time() - start_time
+    
+    if not result['success']:
+        print(f"❌ Flow computation failed: {result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Bidirectional flow computation successful!")
+    print(f"   Time: {elapsed_time:.3f}s")
+    print(f"   Tracked keypoints: {len(result['tracked_keypoints'])}")
+    
+    # Extract flow data
+    flow_data = result['flow_data']
+    forward_flow = flow_data['forward_flow']
+    reverse_flow = flow_data['reverse_flow']
+    
+    print(f"   Forward flow shape: {forward_flow.shape}")
+    print(f"   Reverse flow shape: {reverse_flow.shape if reverse_flow is not None else 'None'}")
+    
+    # Flow statistics
+    forward_magnitude = np.sqrt(forward_flow[:, :, 0]**2 + forward_flow[:, :, 1]**2)
+    print(f"   Forward flow magnitude: mean={forward_magnitude.mean():.2f}, max={forward_magnitude.max():.2f}")
+    
+    if reverse_flow is not None:
+        reverse_magnitude = np.sqrt(reverse_flow[:, :, 0]**2 + reverse_flow[:, :, 1]**2)
+        print(f"   Reverse flow magnitude: mean={reverse_magnitude.mean():.2f}, max={reverse_magnitude.max():.2f}")
+    
+    # ========================================
+    # FLOW VISUALIZATION
+    # ========================================
+    print("\n🎨 Creating flow visualizations...")
+    try:
+        # Import flow visualization utilities
+        import sys
+        import os
+        sys.path.append('ThirdParty/FlowFormerPlusPlusServer')
+        from core.utils import flow_viz
+        
+        # Create output directory
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 1. SAVE JSON RESULTS FIRST
+        json_path = os.path.join(output_dir, 'flow_visualization_results.json')
+        
+        # Create a serializable version of the results (without numpy arrays)
+        json_result = {
+            'success': result['success'],
+            'tracked_keypoints': result['tracked_keypoints'],
+            'flow_computation_time': result['flow_computation_time'],
+            'reverse_flow_computation_time': result['reverse_flow_computation_time'],
+            'total_processing_time': result['total_processing_time'],
+            'bidirectional_enabled': result['bidirectional_enabled'],
+            'bidirectional_stats': result['bidirectional_stats'],
+            'forward_flow_shape': list(forward_flow.shape),
+            'reverse_flow_shape': list(reverse_flow.shape) if reverse_flow is not None else None,
+            'flow_statistics': {
+                'forward_flow': {
+                    'mean_magnitude': float(forward_magnitude.mean()),
+                    'max_magnitude': float(forward_magnitude.max()),
+                    'std_magnitude': float(forward_magnitude.std())
+                },
+                'reverse_flow': {
+                    'mean_magnitude': float(reverse_magnitude.mean()),
+                    'max_magnitude': float(reverse_magnitude.max()),
+                    'std_magnitude': float(reverse_magnitude.std())
+                } if reverse_flow is not None else None
+            }
+        }
+        
+        with open(json_path, 'w') as f:
+            json.dump(json_result, f, indent=2)
+        
+        print(f"✅ Results saved: {json_path}")
+        
+        # 2. VISUALIZE FORWARD FLOW
+        print("   Creating forward flow visualization...")
+        forward_flow_img = flow_viz.flow_to_image(forward_flow)
+        forward_vis_path = os.path.join(output_dir, 'forward_flow_visualization.jpg')
+        cv2.imwrite(forward_vis_path, forward_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Forward flow saved: {forward_vis_path}")
+        
+        # 3. VISUALIZE REVERSE FLOW
+        if reverse_flow is not None:
+            print("   Creating reverse flow visualization...")
+            reverse_flow_img = flow_viz.flow_to_image(reverse_flow)
+            reverse_vis_path = os.path.join(output_dir, 'reverse_flow_visualization.jpg')
+            cv2.imwrite(reverse_vis_path, reverse_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+            print(f"✅ Reverse flow saved: {reverse_vis_path}")
+        
+        # 4. CREATE COMBINED VISUALIZATION
+        print("   Creating combined flow visualization...")
+        
+        # Create side-by-side comparison
+        h, w = forward_flow_img.shape[:2]
+        if reverse_flow is not None:
+            combined_width = w * 2 + 20  # 20px gap
+            combined_img = np.zeros((h, combined_width, 3), dtype=np.uint8)
+            
+            # Place forward flow on the left
+            combined_img[:h, :w] = forward_flow_img
+            
+            # Place reverse flow on the right
+            combined_img[:h, w+20:w*2+20] = reverse_flow_img
+            
+            # Add labels
+            cv2.putText(combined_img, "Forward Flow (Ref->Target)", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(combined_img, "Reverse Flow (Target->Ref)", (w+30, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Add flow statistics
+            cv2.putText(combined_img, f"Mean: {forward_magnitude.mean():.1f}px", (10, h-40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(combined_img, f"Max: {forward_magnitude.max():.1f}px", (10, h-20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            cv2.putText(combined_img, f"Mean: {reverse_magnitude.mean():.1f}px", (w+30, h-40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(combined_img, f"Max: {reverse_magnitude.max():.1f}px", (w+30, h-20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        else:
+            combined_img = forward_flow_img
+            cv2.putText(combined_img, "Forward Flow Only", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        combined_vis_path = os.path.join(output_dir, 'combined_flow_visualization.jpg')
+        cv2.imwrite(combined_vis_path, combined_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Combined flow saved: {combined_vis_path}")
+        
+        # 5. CREATE KEYPOINTS OVERLAY ON FLOW
+        print("   Creating keypoints overlay on flow...")
+        
+        # Overlay keypoints on forward flow
+        keypoints_flow_img = forward_flow_img.copy()
+        for i, kp in enumerate(result['tracked_keypoints']):
+            # Show original reference keypoint position
+            if i < len(ref_keypoints):
+                orig_x, orig_y = int(ref_keypoints[i]['x']), int(ref_keypoints[i]['y'])
+                if 0 <= orig_x < w and 0 <= orig_y < h:
+                    cv2.circle(keypoints_flow_img, (orig_x, orig_y), 3, (255, 255, 255), -1)
+                    cv2.circle(keypoints_flow_img, (orig_x, orig_y), 4, (0, 0, 0), 1)
+            
+            # Show tracked keypoint position
+            track_x, track_y = int(kp['x']), int(kp['y'])
+            if 0 <= track_x < w and 0 <= track_y < h:
+                cv2.circle(keypoints_flow_img, (track_x, track_y), 3, (0, 255, 0), -1)
+                cv2.circle(keypoints_flow_img, (track_x, track_y), 4, (0, 0, 0), 1)
+                cv2.putText(keypoints_flow_img, str(i+1), (track_x+5, track_y-5), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add legend
+        cv2.putText(keypoints_flow_img, "White: Reference keypoints", (10, h-40), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(keypoints_flow_img, "Green: Tracked keypoints", (10, h-20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        keypoints_overlay_path = os.path.join(output_dir, 'flow_keypoints_overlay.jpg')
+        cv2.imwrite(keypoints_overlay_path, keypoints_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Keypoints overlay saved: {keypoints_overlay_path}")
+        
+    except Exception as e:
+        print(f"⚠️ Flow visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return True
+
+
 def run_performance_benchmark():
     """
     Performance benchmark: Measure and compare different tracking modes
@@ -891,6 +1104,7 @@ def main():
         ("Bidirectional Validation", test_bidirectional_validation),
         ("Multiple References", test_multiple_references),
         ("Resolution Scaling", test_resolution_scaling),
+        ("Flow Visualization", test_flow_visualization),
         ("Performance Benchmark", run_performance_benchmark)
     ]
     
