@@ -68,11 +68,11 @@ def initialize_tracker():
 app = Flask(__name__)
 
 # Helper function to create API responses
-def create_api_response(success: bool, message: str, data: Optional[Dict] = None, error: Optional[str] = None) -> Dict:
+def create_api_response(success: bool, message: str, result: Optional[Dict] = None, error: Optional[str] = None) -> Dict:
     return {
         'success': success,
         'message': message,
-        'data': data,
+        'result': result,
         'error': error,
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     }
@@ -159,7 +159,7 @@ def service_info():
             <p><strong>FlowFormer++ Integration</strong> - High-performance keypoint tracking</p>
             
             <h2>Tracker-Compatible Endpoints:</h2>
-            <div class="endpoint"><strong>POST /set_reference_image</strong> - Set reference image with keypoints</div>
+            <div class="endpoint"><strong>POST /set_reference_image</strong> - Set reference image with optional keypoints</div>
             <div class="endpoint"><strong>POST /track_keypoints</strong> - Track keypoints using FlowFormer++</div>
             <div class="endpoint"><strong>POST /remove_reference_image</strong> - Remove reference image by name</div>
             
@@ -200,7 +200,7 @@ def health_check():
     return jsonify(create_api_response(
         success=tracker_initialized,
         message="Service is running with FlowFormer++ tracking" if tracker_initialized else "Service degraded: tracker not initialized",
-        data=status
+        result=status
     ))
 
 @app.route("/references")
@@ -224,7 +224,7 @@ def list_references():
     return jsonify(create_api_response(
         success=True,
         message=f"Found {len(references)} reference images",
-        data={
+        result={
             "references": references,
             "total_count": len(references),
             "default_reference": tracker.default_reference_key if tracker_initialized else None
@@ -262,31 +262,26 @@ def set_reference_image():
                 message="No image_base64 field provided"
             )), 400
         
-        if 'keypoints' not in data:
-            return jsonify(create_api_response(
-                success=False,
-                message="No keypoints field provided"
-            )), 400
-        
         # Get data fields
         image_base64 = data['image_base64']
-        keypoints_data = data['keypoints']
+        keypoints_data = data.get('keypoints')  # Now optional
         image_name = data.get('image_name')
         
         # Decode and load image
         image_np = decode_base64_image(image_base64)
         
-        # Validate keypoints format
-        if not isinstance(keypoints_data, list):
-            return jsonify(create_api_response(
-                success=False,
-                message="Keypoints must be a list"
-            )), 400
-        
-        # Validate keypoints format
-        for kp in keypoints_data:
-            if not isinstance(kp, dict) or 'x' not in kp or 'y' not in kp:
-                raise ValueError("Each keypoint must be a dict with 'x' and 'y' keys")
+        # Validate keypoints format if provided
+        if keypoints_data is not None:
+            if not isinstance(keypoints_data, list):
+                return jsonify(create_api_response(
+                    success=False,
+                    message="Keypoints must be a list when provided"
+                )), 400
+            
+            # Validate keypoints format
+            for kp in keypoints_data:
+                if not isinstance(kp, dict) or 'x' not in kp or 'y' not in kp:
+                    raise ValueError("Each keypoint must be a dict with 'x' and 'y' keys")
         
         # Use tracker to set reference image
         result = tracker.set_reference_image(
@@ -296,15 +291,11 @@ def set_reference_image():
         )
         
         if result.get('success', False):
+            keypoints_count = len(keypoints_data) if keypoints_data is not None else 0
             return jsonify(create_api_response(
                 success=True,
-                message=f"Reference image set successfully with {len(keypoints_data)} keypoints",
-                data={
-                    "keypoints_count": len(keypoints_data),
-                    "image_name": result.get('key'),
-                    "image_shape": result.get('regularized_image_shape'),
-                    "processing_time": 0.0
-                }
+                message=f"Reference image set successfully" + (f" with {keypoints_count} keypoints" if keypoints_count > 0 else " (no keypoints provided)"),
+                result=result  # Return the complete tracker result
             ))
         else:
             return jsonify(create_api_response(
@@ -377,15 +368,7 @@ def track_keypoints():
             return jsonify(create_api_response(
                 success=True,
                 message=f"Keypoint tracking completed successfully",
-                data={
-                    "tracked_keypoints": result.get('tracked_keypoints', []),
-                    "keypoints_count": len(result.get('tracked_keypoints', [])),
-                    "processing_time": result.get('total_processing_time', 0),
-                    "reference_used": result.get('reference_name'),
-                    "bidirectional_enabled": bidirectional,
-                    "bidirectional_stats": result.get('bidirectional_stats') if bidirectional else None,
-                    "device_used": str(tracker.device) if tracker.device else "unknown"
-                }
+                result=result  # Return the complete tracker result
             ))
         else:
             return jsonify(create_api_response(
@@ -437,10 +420,7 @@ def remove_reference_image():
                 return jsonify(create_api_response(
                     success=True,
                     message=f"Reference image removed successfully",
-                    data={
-                        "removed_key": result.get('removed_key'),
-                        "remaining_count": result.get('remaining_references', 0)
-                    }
+                    result=result  # Return the complete tracker result
                 ))
             else:
                 return jsonify(create_api_response(
@@ -487,7 +467,7 @@ def remove_reference_image():
             return jsonify(create_api_response(
                 success=True,
                 message=f"Reference image removed successfully",
-                data={
+                result={
                     "removed_key": key_to_remove,
                     "remaining_count": len(tracker.reference_data)
                 }
@@ -538,8 +518,8 @@ def api_docs():
         <h2>Tracking Endpoints</h2>
         <div class="endpoint tracker-compatible">
             <div class="method post">POST /set_reference_image</div>
-            <p>Set reference image with keypoints</p>
-            <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "keypoints": [...], "image_name": "optional"}</p>
+            <p>Set reference image with optional keypoints</p>
+            <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "keypoints": [...] (optional), "image_name": "optional"}</p>
         </div>
         
         <div class="endpoint tracker-compatible">

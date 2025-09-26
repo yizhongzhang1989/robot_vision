@@ -1,7 +1,25 @@
 """
 FlThis module provides the FFPPWebAPIKeypointTracker class that interfaces with
 the FlowFormer++ Flask web service for keypoint tracking. It maintains the same
-interface as the direct FFPPKeypointTracker but uses HTTP API calls instead of
+interface as the direct FFPPKeypointTracker but u                if result.get('success', False):
+                    # Get the complete tracker result
+                    tracker_result = result.get('result', {})
+                    ref_key = tracker_result.get('key', 'default')
+                    self.reference_data[ref_key] = {
+                        'keypoints_count': len(keypoints),
+                        'set_time': time.time()
+                    }
+                    
+                    if image_name is None or ref_key == 'default':
+                        self.default_reference_key = ref_key
+                    
+                    # Return the complete tracker result with additional API info
+                    return_result = tracker_result.copy() if tracker_result else {}
+                    return_result.update({
+                        'service_call_time': service_call_time,
+                        'service_response': tracker_result
+                    })
+                    return return_results instead of
 direct model inference.
 
 Features:
@@ -201,18 +219,21 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                 data['image_name'] = image_name
             
             # Make API call with JSON using tracker-compatible endpoint name
+            start_time = time.time()
             response = self.session.post(
                 f"{self.service_url}/set_reference_image",
                 json=data,
                 headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
             )
+            service_call_time = time.time() - start_time
             
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success', False):
-                    # Update local reference tracking
-                    ref_key = result.get('data', {}).get('image_name', 'default')
+                    # Get the complete tracker result
+                    tracker_result = result.get('result', {})
+                    ref_key = tracker_result.get('key', 'default')
                     self.reference_data[ref_key] = {
                         'keypoints_count': len(keypoints),
                         'set_time': time.time()
@@ -307,32 +328,28 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                 data['reference_name'] = reference_name
             
             # Make API call with JSON using tracker-compatible endpoint name
+            start_time = time.time()
             response = self.session.post(
                 f"{self.service_url}/track_keypoints",
                 json=data,
                 headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
             )
+            service_call_time = time.time() - start_time
             
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success', False):
-                    service_data = result.get('data', {})
+                    # Get the complete tracker result
+                    tracker_result = result.get('result', {})
                     
-                    # Extract tracking results
-                    tracked_keypoints = service_data.get('tracked_keypoints', [])
-                    
-                    return {
-                        'success': True,
-                        'tracked_keypoints': tracked_keypoints,
-                        'keypoints_count': len(tracked_keypoints),
-                        'reference_name': service_data.get('reference_used'),
-                        'total_processing_time': service_data.get('processing_time', 0),
-                        'bidirectional_enabled': bidirectional,
-                        'bidirectional_stats': service_data.get('bidirectional_stats'),
-                        'device_used': service_data.get('device_used', 'unknown'),
-                        'service_response': service_data
-                    }
+                    # Return the complete tracker result with additional API info
+                    return_result = tracker_result.copy() if tracker_result else {}
+                    return_result.update({
+                        'service_call_time': service_call_time,
+                        'service_response': tracker_result
+                    })
+                    return return_result
                 else:
                     return {
                         'success': False,
@@ -398,16 +415,21 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             # Call web service to remove from server
             data = {'image_name': key_to_remove}
             
+            start_time = time.time()
             response = self.session.post(
                 f"{self.service_url}/remove_reference_image",
                 json=data,
                 headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
             )
+            service_call_time = time.time() - start_time
             
             if response.status_code == 200:
                 result = response.json()
                 if result.get('success', False):
+                    # Get the complete tracker result
+                    tracker_result = result.get('result', {})
+                    
                     # Remove from local tracking on successful server removal
                     del self.reference_data[key_to_remove]
                     
@@ -418,13 +440,15 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                         else:
                             self.default_reference_key = None
                     
-                    return {
-                        'success': True,
-                        'removed_key': key_to_remove,
+                    # Return the complete tracker result with additional API info
+                    return_result = tracker_result.copy() if tracker_result else {}
+                    return_result.update({
+                        'service_call_time': service_call_time,
                         'remaining_count': len(self.reference_data),
-                        'server_response': result.get('data', {}),
+                        'service_response': tracker_result,
                         'note': 'Reference removed from both local tracking and server storage.'
-                    }
+                    })
+                    return return_result
                 else:
                     return {
                         'success': False,
