@@ -351,10 +351,16 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     })
                     return return_result
                 else:
-                    return {
+                    # Return the complete tracker result even on failure for debugging
+                    tracker_result = result.get('result', {})
+                    return_result = tracker_result.copy() if tracker_result else {}
+                    return_result.update({
                         'success': False,
-                        'error': f"Service error: {result.get('message', 'Unknown error')}"
-                    }
+                        'error': f"Service error: {result.get('message', 'Unknown error')}",
+                        'service_call_time': service_call_time,
+                        'service_response': tracker_result
+                    })
+                    return return_result
             else:
                 return {
                     'success': False,
@@ -450,10 +456,16 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     })
                     return return_result
                 else:
-                    return {
+                    # Return the complete tracker result even on failure for debugging
+                    tracker_result = result.get('result', {})
+                    return_result = tracker_result.copy() if tracker_result else {}
+                    return_result.update({
                         'success': False,
-                        'error': f"Server error: {result.get('message', 'Unknown error')}"
-                    }
+                        'error': f"Server error: {result.get('message', 'Unknown error')}",
+                        'service_call_time': service_call_time,
+                        'service_response': tracker_result
+                    })
+                    return return_result
             else:
                 return {
                     'success': False,

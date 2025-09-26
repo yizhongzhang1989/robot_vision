@@ -290,6 +290,7 @@ def set_reference_image():
             image_name=image_name
         )
         
+        # Always return the complete tracker result for debugging, regardless of success/failure
         if result.get('success', False):
             keypoints_count = len(keypoints_data) if keypoints_data is not None else 0
             return jsonify(create_api_response(
@@ -300,7 +301,8 @@ def set_reference_image():
         else:
             return jsonify(create_api_response(
                 success=False,
-                message=f"Failed to set reference image: {result.get('error', 'unknown error')}"
+                message=f"Failed to set reference image: {result.get('error', 'unknown error')}",
+                result=result  # Return the complete tracker result for debugging
             )), 500
         
     except json.JSONDecodeError as e:
@@ -364,6 +366,7 @@ def track_keypoints():
             bidirectional=bidirectional
         )
         
+        # Always return the complete tracker result for debugging, regardless of success/failure
         if result.get('success', False):
             return jsonify(create_api_response(
                 success=True,
@@ -373,7 +376,8 @@ def track_keypoints():
         else:
             return jsonify(create_api_response(
                 success=False,
-                message=f"Tracking failed: {result.get('error', 'unknown error')}"
+                message=f"Tracking failed: {result.get('error', 'unknown error')}",
+                result=result  # Return the complete tracker result for debugging
             )), 500
         
     except Exception as e:
@@ -416,6 +420,7 @@ def remove_reference_image():
         if hasattr(tracker, 'remove_reference_image'):
             result = tracker.remove_reference_image(image_name)
             
+            # Always return the complete tracker result for debugging, regardless of success/failure
             if result.get('success', False):
                 return jsonify(create_api_response(
                     success=True,
@@ -425,7 +430,8 @@ def remove_reference_image():
             else:
                 return jsonify(create_api_response(
                     success=False,
-                    message=f"Failed to remove reference: {result.get('error', 'Unknown error')}"
+                    message=f"Failed to remove reference: {result.get('error', 'Unknown error')}",
+                    result=result  # Return the complete tracker result for debugging
                 )), 404
         else:
             # Fallback: manual reference management
