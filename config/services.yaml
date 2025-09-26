@@ -1,0 +1,39 @@
+# Robot Vision Services Configuration
+# ===================================
+
+gateway:
+  port: 8000
+  title: "Robot Vision Control Center"
+  description: "Centralized control interface for robot vision services"
+
+services:
+  ffpp_keypoint_tracking:
+    name: "FlowFormer++ Keypoint Tracking Service"
+    description: "FlowFormer++ based keypoint tracking for robot vision"
+    port: 8001
+    type: "fastapi"
+    path: "web/ffpp_keypoint_tracking"
+    dependencies: 
+      - "cuda"
+      - "flowformer++"
+      - "core.ffpp_keypoint_tracker"
+    health_endpoint: "/health"
+    docs_endpoint: "/docs"
+    
+  image_labeling:
+    name: "Image Labeling Tool"  
+    description: "Interactive image annotation and keypoint labeling web interface"
+    port: 8003
+    type: "static_web"
+    path: "ThirdParty/ImageLabelingWeb"
+    launcher: "launch_server.py"
+    dependencies: []
+    health_endpoint: "/"
+    docs_endpoint: null
+
+# Global settings
+settings:
+  cors_origins: ["*"]
+  log_level: "info"
+  auto_reload: false
+  project_root: "/home/yizzhan/Documents/robot_vision"
