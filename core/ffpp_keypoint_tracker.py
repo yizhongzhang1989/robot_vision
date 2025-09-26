@@ -343,7 +343,8 @@ class FFPPKeypointTracker:
     def track_keypoints(self, 
                        target_image: np.ndarray,
                        reference_name: Optional[str] = None,
-                       bidirectional: bool = False) -> Dict:
+                       bidirectional: bool = False,
+                       return_flow: bool = False) -> Dict:
         """Track keypoints from stored reference image to target image.
         
         This is the second of two main public methods. Use this to track keypoints
@@ -354,11 +355,13 @@ class FFPPKeypointTracker:
             reference_name: Name of stored reference image to use. If None, uses default reference.
             bidirectional: If True, compute reverse flow for accuracy validation. Tracks keypoints
                           forward (ref→target) then backward (target→ref) and measures consistency.
+            return_flow: If True, include raw optical flow data in the returned results.
             
         Returns:
             dict: Tracking results with success status, tracked keypoints, and statistics.
                  The tracked keypoints are returned in the original target image coordinate system.
                  If bidirectional=True, includes accuracy metrics for each keypoint.
+                 If return_flow=True, includes 'flow_data' with raw optical flow arrays and statistics.
         
         Note:
             You must call set_reference_image() first to store a reference image with keypoints
@@ -512,7 +515,8 @@ class FFPPKeypointTracker:
                         'total_keypoints': len(tracked_keypoints)
                     }
             
-            return {
+            # Build the base result dictionary
+            result = {
                 'success': True,
                 'tracked_keypoints': tracked_keypoints,
                 'flow_computation_time': forward_flow_stats['processing_time'],
@@ -534,6 +538,17 @@ class FFPPKeypointTracker:
                 'available_references': list(self.reference_data.keys()),
                 'default_reference': self.default_reference_key
             }
+            
+            # Add raw flow data if requested
+            if return_flow:
+                result['flow_data'] = {
+                    'forward_flow': forward_flow,
+                    'reverse_flow': reverse_flow if reverse_flow is not None else None,
+                    'forward_flow_stats': forward_flow_stats,
+                    'reverse_flow_stats': reverse_flow_stats
+                }
+            
+            return result
             
         except Exception as e:
             return {
