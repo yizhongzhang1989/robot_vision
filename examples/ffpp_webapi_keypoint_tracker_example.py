@@ -644,9 +644,274 @@ def test_multiple_references():
     return result1.get('success', False) and result2.get('success', False)
 
 
+def test_flow_visualization():
+    """
+    Test 4: Flow visualization with return_flow parameter via web API
+    
+    This test demonstrates extracting and visualizing raw optical flow data
+    from the web API tracker. Tests both forward and reverse flow visualization
+    using bidirectional flow computation via web service.
+    """
+    print("\n🧪 Test 4: Flow Visualization (Web API)")
+    print("=" * 50)
+    
+    # ========================================
+    # DATA PREPARATION
+    # ========================================
+    data_result = load_sample_data()
+    if data_result is None:
+        return False
+    
+    target_img, ref_img, ref_keypoints = data_result
+    
+    print(f"✅ Loaded images: ref {ref_img.shape}, target {target_img.shape}")
+    print(f"✅ Reference keypoints: {len(ref_keypoints)}")
+    
+    # ========================================
+    # TRACKER INITIALIZATION
+    # ========================================
+    print("\n🚀 Initializing tracker...")
+    
+    try:
+        tracker = FFPPWebAPIKeypointTracker(service_url=WEB_SERVICE_URL)
+    except Exception as e:
+        print(f"❌ Failed to initialize tracker: {e}")
+        return False
+    
+    # ========================================
+    # FLOW COMPUTATION AND VISUALIZATION VIA API
+    # ========================================
+    print("\n🎯 Step 1: Setting reference image via API...")
+    ref_result = tracker.set_reference_image(ref_img, ref_keypoints, "flow_test_ref")
+    
+    if not ref_result['success']:
+        print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Reference image set with {ref_result['keypoints_count']} keypoints")
+    
+    print("\n🎯 Step 2: Computing bidirectional flow with return_flow=True via API...")
+    start_time = time.time()
+    result = tracker.track_keypoints(target_img, reference_name="flow_test_ref", 
+                                   bidirectional=True, return_flow=True)
+    elapsed_time = time.time() - start_time
+    
+    if not result['success']:
+        print(f"❌ Flow computation failed: {result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Bidirectional flow computation successful!")
+    print(f"   API call time: {elapsed_time:.3f}s")
+    print(f"   Service processing time: {result.get('total_processing_time', 0):.3f}s")
+    print(f"   Tracked keypoints: {len(result['tracked_keypoints'])}")
+    
+    # Extract flow data (should be decoded numpy arrays)
+    if 'flow_data' not in result:
+        print("❌ No flow data returned - check return_flow parameter implementation")
+        return False
+    
+    flow_data = result['flow_data']
+    forward_flow = flow_data.get('forward_flow')
+    reverse_flow = flow_data.get('reverse_flow')
+    
+    if forward_flow is None:
+        print("❌ No forward flow data returned")
+        return False
+    
+    print(f"   Forward flow shape: {forward_flow.shape}")
+    print(f"   Forward flow dtype: {forward_flow.dtype}")
+    print(f"   Reverse flow shape: {reverse_flow.shape if reverse_flow is not None else 'None'}")
+    
+    # Verify that we received numpy arrays (not encoded data)
+    if not isinstance(forward_flow, np.ndarray):
+        print(f"❌ Expected numpy array, got {type(forward_flow)}")
+        return False
+    
+    # Flow statistics
+    forward_magnitude = np.sqrt(forward_flow[:, :, 0]**2 + forward_flow[:, :, 1]**2)
+    print(f"   Forward flow magnitude: mean={forward_magnitude.mean():.2f}, max={forward_magnitude.max():.2f}")
+    
+    if reverse_flow is not None:
+        reverse_magnitude = np.sqrt(reverse_flow[:, :, 0]**2 + reverse_flow[:, :, 1]**2)
+        print(f"   Reverse flow magnitude: mean={reverse_magnitude.mean():.2f}, max={reverse_magnitude.max():.2f}")
+    
+    # ========================================
+    # FLOW VISUALIZATION
+    # ========================================
+    print("\n🎨 Creating flow visualizations...")
+    try:
+        # Simple flow visualization function
+        def flow_to_image_simple(flow):
+            """Simple flow visualization using color coding."""
+            h, w = flow.shape[:2]
+            fx, fy = flow[:, :, 0], flow[:, :, 1]
+            
+            # Calculate angle and magnitude
+            ang = np.arctan2(fy, fx) + np.pi
+            v = np.sqrt(fx*fx + fy*fy)
+            
+            # Create HSV image
+            hsv = np.zeros((h, w, 3), dtype=np.uint8)
+            hsv[:, :, 0] = ang * (180 / np.pi / 2)  # Hue
+            hsv[:, :, 1] = 255  # Saturation
+            hsv[:, :, 2] = np.minimum(v * 4, 255)  # Value
+            
+            # Convert to RGB
+            rgb_img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+            return rgb_img
+        
+        # Create output directory
+        output_dir = 'output/ffpp_webapi_keypoint_tracker_example_output'
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 1. SAVE JSON RESULTS FIRST
+        json_path = os.path.join(output_dir, 'flow_visualization_results.json')
+        
+        # Create a serializable version of the results (without numpy arrays)
+        json_result = {
+            'success': result['success'],
+            'tracked_keypoints': result['tracked_keypoints'],
+            'total_processing_time': result.get('total_processing_time', 0),
+            'bidirectional_enabled': result.get('bidirectional_enabled', False),
+            'bidirectional_stats': result.get('bidirectional_stats', {}),
+            'forward_flow_shape': list(forward_flow.shape),
+            'reverse_flow_shape': list(reverse_flow.shape) if reverse_flow is not None else None,
+            'flow_statistics': {
+                'forward_flow': {
+                    'mean_magnitude': float(forward_magnitude.mean()),
+                    'max_magnitude': float(forward_magnitude.max()),
+                    'std_magnitude': float(forward_magnitude.std())
+                },
+                'reverse_flow': {
+                    'mean_magnitude': float(reverse_magnitude.mean()),
+                    'max_magnitude': float(reverse_magnitude.max()),
+                    'std_magnitude': float(reverse_magnitude.std())
+                } if reverse_flow is not None else None
+            },
+            'test_info': {
+                'test_name': 'flow_visualization_webapi',
+                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'service_url': tracker.service_url,
+                'return_flow_enabled': True
+            }
+        }
+        
+        with open(json_path, 'w') as f:
+            json.dump(json_result, f, indent=2)
+        
+        print(f"✅ Results saved: {json_path}")
+        
+        # 2. VISUALIZE FORWARD FLOW
+        print("   Creating forward flow visualization...")
+        forward_flow_img = flow_to_image_simple(forward_flow)
+        forward_vis_path = os.path.join(output_dir, 'webapi_forward_flow_visualization.jpg')
+        cv2.imwrite(forward_vis_path, forward_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Forward flow saved: {forward_vis_path}")
+        
+        # 3. VISUALIZE REVERSE FLOW
+        if reverse_flow is not None:
+            print("   Creating reverse flow visualization...")
+            reverse_flow_img = flow_to_image_simple(reverse_flow)
+            reverse_vis_path = os.path.join(output_dir, 'webapi_reverse_flow_visualization.jpg')
+            cv2.imwrite(reverse_vis_path, reverse_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+            print(f"✅ Reverse flow saved: {reverse_vis_path}")
+        
+        # 4. CREATE COMBINED VISUALIZATION
+        print("   Creating combined flow visualization...")
+        
+        # Create side-by-side comparison
+        h, w = forward_flow_img.shape[:2]
+        if reverse_flow is not None:
+            combined_width = w * 2 + 20  # 20px gap
+            combined_img = np.zeros((h, combined_width, 3), dtype=np.uint8)
+            
+            # Place forward flow on the left
+            combined_img[:h, :w] = forward_flow_img
+            
+            # Place reverse flow on the right
+            combined_img[:h, w+20:w*2+20] = reverse_flow_img
+            
+            # Add labels
+            cv2.putText(combined_img, "Forward Flow (Ref->Target)", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(combined_img, "Reverse Flow (Target->Ref)", (w+30, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            
+            # Add Web API label
+            cv2.putText(combined_img, "Generated via Web API", (10, h-10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            
+            # Add flow statistics
+            cv2.putText(combined_img, f"Mean: {forward_magnitude.mean():.1f}px", (10, h-40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(combined_img, f"Max: {forward_magnitude.max():.1f}px", (10, h-25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            
+            cv2.putText(combined_img, f"Mean: {reverse_magnitude.mean():.1f}px", (w+30, h-40), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(combined_img, f"Max: {reverse_magnitude.max():.1f}px", (w+30, h-25), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        else:
+            combined_img = forward_flow_img
+            cv2.putText(combined_img, "Forward Flow Only (Web API)", (10, 30), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        combined_vis_path = os.path.join(output_dir, 'webapi_combined_flow_visualization.jpg')
+        cv2.imwrite(combined_vis_path, combined_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Combined flow saved: {combined_vis_path}")
+        
+        # 5. CREATE KEYPOINTS OVERLAY ON FLOW
+        print("   Creating keypoints overlay on flow...")
+        
+        # Overlay keypoints on forward flow
+        keypoints_flow_img = forward_flow_img.copy()
+        for i, kp in enumerate(result['tracked_keypoints']):
+            # Show original reference keypoint position
+            if i < len(ref_keypoints):
+                orig_x, orig_y = int(ref_keypoints[i]['x']), int(ref_keypoints[i]['y'])
+                if 0 <= orig_x < w and 0 <= orig_y < h:
+                    cv2.circle(keypoints_flow_img, (orig_x, orig_y), 3, (255, 255, 255), -1)
+                    cv2.circle(keypoints_flow_img, (orig_x, orig_y), 4, (0, 0, 0), 1)
+            
+            # Show tracked keypoint position
+            track_x, track_y = int(kp['x']), int(kp['y'])
+            if 0 <= track_x < w and 0 <= track_y < h:
+                cv2.circle(keypoints_flow_img, (track_x, track_y), 3, (0, 255, 0), -1)
+                cv2.circle(keypoints_flow_img, (track_x, track_y), 4, (0, 0, 0), 1)
+                cv2.putText(keypoints_flow_img, str(i+1), (track_x+5, track_y-5), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add legend and Web API identifier
+        cv2.putText(keypoints_flow_img, "White: Reference keypoints", (10, h-55), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(keypoints_flow_img, "Green: Tracked keypoints", (10, h-40), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        cv2.putText(keypoints_flow_img, "Flow data via Web API", (10, h-25), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.putText(keypoints_flow_img, f"Decoded from base64 transfer", (10, h-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+        
+        keypoints_overlay_path = os.path.join(output_dir, 'webapi_flow_keypoints_overlay.jpg')
+        cv2.imwrite(keypoints_overlay_path, keypoints_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
+        print(f"✅ Keypoints overlay saved: {keypoints_overlay_path}")
+        
+    except Exception as e:
+        print(f"⚠️ Flow visualization failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    
+    # Clean up reference
+    cleanup_result = tracker.remove_reference_image("flow_test_ref")
+    if cleanup_result.get('success'):
+        print(f"✅ Reference cleaned up")
+    
+    return True
+
+
 def test_service_features():
     """
-    Test 4: Web service specific features
+    Test 5: Web service specific features
     
     This test demonstrates features specific to the web API tracker.
     """
@@ -714,11 +979,11 @@ def test_service_features():
 
 def run_performance_benchmark():
     """
-    Test 5: Performance benchmark of web API calls
+    Test 6: Performance benchmark of web API calls
     
     This test measures the performance of web API tracking operations.
     """
-    print("\n🧪 Test 5: Performance Benchmark (Web API)")
+    print("\n🧪 Test 6: Performance Benchmark (Web API)")
     print("=" * 50)
     
     # ========================================
@@ -926,6 +1191,7 @@ def main():
         ("Basic API Tracking", test_basic_tracking),
         ("Bidirectional API Validation", test_bidirectional_validation),
         ("Multiple References API", test_multiple_references),
+        ("Flow Visualization API", test_flow_visualization),
         ("Web Service Features", test_service_features),
         ("API Performance Benchmark", run_performance_benchmark)
     ]

@@ -207,8 +207,8 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     'error': 'Keypoints must be a list of dictionaries'
                 }
             
-            # Prepare JSON data with base64 encoded image
-            image_base64 = self._numpy_to_base64_jpg(image)
+            # Prepare JSON data with base64 encoded image (lossless PNG)
+            image_base64 = self._numpy_to_base64_png(image)
             
             data = {
                 'image_base64': image_base64,
@@ -275,6 +275,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                        target_image: np.ndarray,
                        reference_name: Optional[str] = None,
                        bidirectional: bool = False,
+                       return_flow: bool = False,
                        **kwargs) -> Dict:
         """Track keypoints from stored reference image to target image via web API.
         
@@ -290,6 +291,9 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             bidirectional: If True, request bidirectional flow validation from service. Tracks keypoints
                           forward (ref→target) then backward (target→ref) and measures consistency.
                           Default is False for faster processing.
+            return_flow: If True, request raw optical flow data from service. The flow arrays
+                        will be decoded from base64 and returned as NumPy arrays in 'flow_data'.
+                        Default is False to minimize network transfer.
             **kwargs: Additional arguments (ignored for web API compatibility with direct tracker).
             
         Returns:
@@ -297,6 +301,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                  On success, includes 'tracked_keypoints', 'keypoints_count', 'total_processing_time',
                  'device_used', and 'service_response'. If bidirectional=True, includes 
                  'bidirectional_stats' with accuracy metrics for each keypoint.
+                 If return_flow=True, includes 'flow_data' with decoded NumPy flow arrays.
                  On failure, includes 'error' with detailed error message.
         
         Note:
@@ -316,12 +321,13 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     'error': 'No reference images set. Call set_reference_image() first.'
                 }
             
-            # Prepare JSON data with base64 encoded image
-            image_base64 = self._numpy_to_base64_jpg(target_image)
+            # Prepare JSON data with base64 encoded image (lossless PNG)
+            image_base64 = self._numpy_to_base64_png(target_image)
             
             data = {
                 'image_base64': image_base64,
-                'bidirectional': bidirectional
+                'bidirectional': bidirectional,
+                'return_flow': return_flow
             }
             
             if reference_name:
@@ -349,6 +355,22 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                         'service_call_time': service_call_time,
                         'service_response': tracker_result
                     })
+                    
+                    # Decode flow data if present and requested
+                    if return_flow and 'flow_data' in tracker_result:
+                        flow_data = tracker_result['flow_data']
+                        decoded_flow_data = {}
+                        
+                        for flow_key, flow_info in flow_data.items():
+                            if isinstance(flow_info, dict) and 'data' in flow_info:
+                                # Decode base64 back to numpy array
+                                decoded_array = self._decode_numpy_array_from_base64(flow_info)
+                                decoded_flow_data[flow_key] = decoded_array
+                            else:
+                                decoded_flow_data[flow_key] = flow_info
+                        
+                        return_result['flow_data'] = decoded_flow_data
+                    
                     return return_result
                 else:
                     # Return the complete tracker result even on failure for debugging
@@ -629,25 +651,24 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             print(f"❌ Cannot connect to FlowFormer++ Web API service at {self.service_url}: {e}")
             return False
     
-    def _numpy_to_base64_jpg(self, image: np.ndarray, quality: int = 85) -> str:
-        """Convert numpy array to base64 encoded JPG string for JSON transmission.
+    def _numpy_to_base64_png(self, image: np.ndarray) -> str:
+        """Convert numpy array to base64 encoded PNG string for JSON transmission.
         
-        Internal method for preparing compressed image data for web API JSON transmission.
-        Handles data type conversion and JPG compression for efficient network transfer.
+        Internal method for preparing lossless image data for web API JSON transmission.
+        Uses PNG format to ensure exact pixel preservation for accurate flow computation.
         
         Args:
             image: RGB image as numpy array (H, W, 3) in any numeric dtype.
                   Values are automatically normalized to uint8 range if needed.
-            quality: JPG compression quality (1-100, default 85). Higher = better quality, larger size.
             
         Returns:
-            str: Image data encoded as base64 JPG string suitable for JSON transmission.
-                 Uses JPG compression for efficient network transfer with good quality.
+            str: Image data encoded as base64 PNG string suitable for JSON transmission.
+                 Uses lossless PNG compression to preserve exact pixel values.
                    
         Note:
             Automatically converts float images to uint8 by scaling [0,1] → [0,255].
-            Uses PIL for reliable JPG encoding with customizable compression quality.
-            JPG format chosen for compact size with acceptable quality loss for API transmission.
+            Uses PIL for reliable PNG encoding with lossless compression.
+            PNG format ensures no compression artifacts affect optical flow computation.
             Base64 encoding allows binary data to be included in JSON payloads.
         """
         # Ensure image is in the correct format
@@ -657,13 +678,45 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         # Convert to PIL Image
         pil_image = Image.fromarray(image, 'RGB')
         
-        # Convert to JPG bytes with compression
+        # Convert to PNG bytes with lossless compression
         img_bytes = io.BytesIO()
-        pil_image.save(img_bytes, format='JPEG', quality=quality)
+        pil_image.save(img_bytes, format='PNG', optimize=True)
         img_bytes.seek(0)
         
         # Encode to base64 string
         image_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
         
         return image_base64
+    
+    def _decode_numpy_array_from_base64(self, encoded_data: Dict) -> np.ndarray:
+        """Decode base64 encoded numpy array back to original numpy array.
+        
+        Internal method for decoding flow data received from the web service.
+        Reconstructs the exact numpy array from base64 binary data and metadata.
+        
+        Args:
+            encoded_data: Dictionary containing:
+                - 'data': base64 encoded binary numpy array data
+                - 'shape': original array shape as list
+                - 'dtype': original array dtype as string
+                
+        Returns:
+            np.ndarray: Reconstructed numpy array with original shape and dtype.
+                       Exact binary reconstruction preserves all precision.
+                       
+        Note:
+            This is the inverse operation of the server's encode_numpy_array_to_base64().
+            Uses numpy's binary format for exact precision preservation.
+            Handles arbitrary shapes and dtypes for complete flow data reconstruction.
+        """
+        # Decode base64 to binary data
+        binary_data = base64.b64decode(encoded_data['data'])
+        
+        # Reconstruct numpy array from binary data
+        array = np.frombuffer(binary_data, dtype=encoded_data['dtype'])
+        
+        # Reshape to original dimensions
+        array = array.reshape(encoded_data['shape'])
+        
+        return array
 

@@ -78,7 +78,7 @@ def create_api_response(success: bool, message: str, result: Optional[Dict] = No
     }
 
 def decode_base64_image(image_base64: str) -> np.ndarray:
-    """Decode base64 encoded JPG image and convert to numpy array."""
+    """Decode base64 encoded PNG/JPG image and convert to numpy array."""
     try:
         # Remove data URL prefix if present
         if ',' in image_base64:
@@ -100,8 +100,12 @@ def decode_base64_image(image_base64: str) -> np.ndarray:
     except Exception as e:
         raise ValueError(f"Failed to decode base64 image: {str(e)}")
 
-def encode_image_to_base64(image_np: np.ndarray, quality: int = 85) -> str:
-    """Encode numpy image array to base64 JPG string."""
+def encode_image_to_base64(image_np: np.ndarray) -> str:
+    """Encode numpy image array to base64 PNG string.
+    
+    Uses lossless PNG compression to ensure exact pixel preservation
+    for accurate optical flow computation.
+    """
     try:
         # Ensure image is in the correct format
         if image_np.dtype != np.uint8:
@@ -110,9 +114,9 @@ def encode_image_to_base64(image_np: np.ndarray, quality: int = 85) -> str:
         # Convert to PIL Image
         pil_image = Image.fromarray(image_np, 'RGB')
         
-        # Convert to JPG bytes with compression
+        # Convert to PNG bytes with lossless compression
         img_bytes = io.BytesIO()
-        pil_image.save(img_bytes, format='JPEG', quality=quality)
+        pil_image.save(img_bytes, format='PNG', optimize=True)
         img_bytes.seek(0)
         
         # Encode to base64
@@ -120,6 +124,51 @@ def encode_image_to_base64(image_np: np.ndarray, quality: int = 85) -> str:
         return image_base64
     except Exception as e:
         raise ValueError(f"Failed to encode image to base64: {str(e)}")
+
+def encode_numpy_array_to_base64(array: np.ndarray) -> Dict:
+    """Encode numpy array to base64 string with metadata for exact reconstruction.
+    
+    Args:
+        array: NumPy array to encode
+        
+    Returns:
+        Dict with 'data' (base64 string), 'shape', 'dtype' for reconstruction
+    """
+    try:
+        # Convert array to bytes
+        array_bytes = array.tobytes()
+        
+        # Encode to base64
+        array_base64 = base64.b64encode(array_bytes).decode('utf-8')
+        
+        return {
+            'data': array_base64,
+            'shape': array.shape,
+            'dtype': str(array.dtype)
+        }
+    except Exception as e:
+        raise ValueError(f"Failed to encode numpy array to base64: {str(e)}")
+
+def decode_numpy_array_from_base64(encoded_data: Dict) -> np.ndarray:
+    """Decode numpy array from base64 string with metadata.
+    
+    Args:
+        encoded_data: Dict with 'data' (base64), 'shape', 'dtype'
+        
+    Returns:
+        Reconstructed NumPy array
+    """
+    try:
+        # Decode base64 to bytes
+        array_bytes = base64.b64decode(encoded_data['data'])
+        
+        # Reconstruct array with original shape and dtype
+        array = np.frombuffer(array_bytes, dtype=encoded_data['dtype'])
+        array = array.reshape(encoded_data['shape'])
+        
+        return array
+    except Exception as e:
+        raise ValueError(f"Failed to decode numpy array from base64: {str(e)}")
 
 def load_image_from_upload(file: FileStorage) -> np.ndarray:
     """Load image from uploaded file and convert to numpy array."""
@@ -355,6 +404,7 @@ def track_keypoints():
         image_base64 = data['image_base64']
         reference_name = data.get('reference_name')
         bidirectional = data.get('bidirectional', False)
+        return_flow = data.get('return_flow', False)
         
         # Decode target image
         target_image_np = decode_base64_image(image_base64)
@@ -363,8 +413,31 @@ def track_keypoints():
         result = tracker.track_keypoints(
             target_image=target_image_np,
             reference_name=reference_name,
-            bidirectional=bidirectional
+            bidirectional=bidirectional,
+            return_flow=return_flow
         )
+        
+        # Encode flow data for JSON transmission if return_flow was requested
+        if result.get('success', False) and return_flow and 'flow_data' in result:
+            flow_data = result['flow_data']
+            encoded_flow_data = {}
+            
+            # Encode forward flow
+            if 'forward_flow' in flow_data and flow_data['forward_flow'] is not None:
+                encoded_flow_data['forward_flow'] = encode_numpy_array_to_base64(flow_data['forward_flow'])
+            
+            # Encode reverse flow if present
+            if 'reverse_flow' in flow_data and flow_data['reverse_flow'] is not None:
+                encoded_flow_data['reverse_flow'] = encode_numpy_array_to_base64(flow_data['reverse_flow'])
+            
+            # Copy stats (these are already JSON-serializable)
+            if 'forward_flow_stats' in flow_data:
+                encoded_flow_data['forward_flow_stats'] = flow_data['forward_flow_stats']
+            if 'reverse_flow_stats' in flow_data:
+                encoded_flow_data['reverse_flow_stats'] = flow_data['reverse_flow_stats']
+            
+            # Replace flow_data with encoded version
+            result['flow_data'] = encoded_flow_data
         
         # Always return the complete tracker result for debugging, regardless of success/failure
         if result.get('success', False):
