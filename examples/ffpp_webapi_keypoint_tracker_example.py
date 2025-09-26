@@ -740,25 +740,16 @@ def test_flow_visualization():
     # ========================================
     print("\n🎨 Creating flow visualizations...")
     try:
-        # Simple flow visualization function
-        def flow_to_image_simple(flow):
-            """Simple flow visualization using color coding."""
-            h, w = flow.shape[:2]
-            fx, fy = flow[:, :, 0], flow[:, :, 1]
-            
-            # Calculate angle and magnitude
-            ang = np.arctan2(fy, fx) + np.pi
-            v = np.sqrt(fx*fx + fy*fy)
-            
-            # Create HSV image
-            hsv = np.zeros((h, w, 3), dtype=np.uint8)
-            hsv[:, :, 0] = ang * (180 / np.pi / 2)  # Hue
-            hsv[:, :, 1] = 255  # Saturation
-            hsv[:, :, 2] = np.minimum(v * 4, 255)  # Value
-            
-            # Convert to RGB
-            rgb_img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-            return rgb_img
+        # Import flow visualization utilities
+        import sys
+        import os
+        import importlib.util
+        
+        # Direct import of flow_viz module to avoid path conflicts
+        flow_viz_path = os.path.join('ThirdParty', 'FlowFormerPlusPlusServer', 'core', 'utils', 'flow_viz.py')
+        spec = importlib.util.spec_from_file_location("flow_viz", flow_viz_path)
+        flow_viz = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(flow_viz)
         
         # Create output directory
         output_dir = 'output/ffpp_webapi_keypoint_tracker_example_output'
@@ -803,7 +794,7 @@ def test_flow_visualization():
         
         # 2. VISUALIZE FORWARD FLOW
         print("   Creating forward flow visualization...")
-        forward_flow_img = flow_to_image_simple(forward_flow)
+        forward_flow_img = flow_viz.flow_to_image(forward_flow)
         forward_vis_path = os.path.join(output_dir, 'webapi_forward_flow_visualization.jpg')
         cv2.imwrite(forward_vis_path, forward_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
         print(f"✅ Forward flow saved: {forward_vis_path}")
@@ -811,7 +802,7 @@ def test_flow_visualization():
         # 3. VISUALIZE REVERSE FLOW
         if reverse_flow is not None:
             print("   Creating reverse flow visualization...")
-            reverse_flow_img = flow_to_image_simple(reverse_flow)
+            reverse_flow_img = flow_viz.flow_to_image(reverse_flow)
             reverse_vis_path = os.path.join(output_dir, 'webapi_reverse_flow_visualization.jpg')
             cv2.imwrite(reverse_vis_path, reverse_flow_img[:, :, [2, 1, 0]])  # RGB to BGR for OpenCV
             print(f"✅ Reverse flow saved: {reverse_vis_path}")
@@ -838,7 +829,7 @@ def test_flow_visualization():
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
             # Add Web API label
-            cv2.putText(combined_img, "Generated via Web API", (10, h-10), 
+            cv2.putText(combined_img, f"Generated via Web API (Professional)", (10, h-10), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
             
             # Add flow statistics
@@ -853,7 +844,7 @@ def test_flow_visualization():
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         else:
             combined_img = forward_flow_img
-            cv2.putText(combined_img, "Forward Flow Only (Web API)", (10, 30), 
+            cv2.putText(combined_img, f"Forward Flow Only (Professional Web API)", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
         combined_vis_path = os.path.join(output_dir, 'webapi_combined_flow_visualization.jpg')
