@@ -12,6 +12,7 @@ Code Structure:
 - test_basic_tracking(): Demonstrates core two-step tracking process
 - test_bidirectional_validation(): Shows accuracy assessment features
 - test_multiple_references(): Multiple reference management demo
+- test_resolution_scaling(): Tests tracking across different image resolutions
 - run_performance_benchmark(): Performance comparison between modes
 
 Features demonstrated:
@@ -566,6 +567,185 @@ def test_multiple_references():
     return True
 
 
+def test_resolution_scaling():
+    """
+    Test 4: Resolution scaling compatibility
+    
+    This test demonstrates tracking keypoints across different image resolutions.
+    The reference image and keypoints are scaled to 2/3 of the original size,
+    then tracked on the full-size target image to test scale robustness.
+    """
+    print("\n🧪 Test 4: Resolution Scaling")
+    print("=" * 50)
+    
+    # ========================================
+    # DATA PREPARATION
+    # ========================================
+    target_img, ref_img, ref_keypoints = load_sample_data()
+    
+    # Get original dimensions
+    orig_h, orig_w = ref_img.shape[:2]
+    print(f"✅ Original image size: {orig_w}x{orig_h}")
+    
+    # Calculate 2/3 scale dimensions
+    scale_factor = 2.0 / 3.0
+    scaled_w = int(orig_w * scale_factor)
+    scaled_h = int(orig_h * scale_factor)
+    
+    print(f"✅ Scaled reference size: {scaled_w}x{scaled_h} (scale factor: {scale_factor:.3f})")
+    
+    # Resize reference image
+    scaled_ref_img = cv2.resize(ref_img, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA)
+    
+    # Scale reference keypoints
+    scaled_ref_keypoints = []
+    for kp in ref_keypoints:
+        scaled_kp = {
+            'x': kp['x'] * scale_factor,
+            'y': kp['y'] * scale_factor,
+            'id': kp.get('id', len(scaled_ref_keypoints))
+        }
+        scaled_ref_keypoints.append(scaled_kp)
+    
+    print(f"✅ Scaled {len(scaled_ref_keypoints)} keypoints to new resolution")
+    
+    # ========================================
+    # TRACKER INITIALIZATION
+    # ========================================
+    print("\n🚀 Initializing tracker...")
+    tracker = FFPPKeypointTracker()
+    
+    if not tracker.model_loaded:
+        print("❌ Failed to load model")
+        return False
+    
+    # ========================================
+    # CROSS-SCALE TRACKING
+    # ========================================
+    print("\n🎯 Step 1: Setting scaled reference image...")
+    ref_result = tracker.set_reference_image(scaled_ref_img, scaled_ref_keypoints)
+    
+    if not ref_result['success']:
+        print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
+        return False
+    
+    print(f"✅ Scaled reference image set with {ref_result['keypoints_count']} keypoints")
+    
+    print("\n🎯 Step 2: Tracking keypoints in full-size target image...")
+    start_time = time.time()
+    result = tracker.track_keypoints(target_img)
+    elapsed_time = time.time() - start_time
+    
+    if not result['success']:
+        print(f"❌ Cross-scale tracking failed: {result.get('error', 'Unknown error')}")
+        return False
+    
+    tracked_count = len(result.get('tracked_keypoints', []))
+    print(f"✅ Cross-scale tracking successful!")
+    print(f"   Time: {elapsed_time:.3f}s")
+    print(f"   Tracked: {tracked_count} keypoints")
+    print(f"   Processing time: {result.get('total_processing_time', 0):.3f}s")
+    
+    # ========================================
+    # OUTPUT AND VISUALIZATION
+    # ========================================
+    print("\n📊 Creating outputs...")
+    try:
+        # Create output directory
+        output_dir = 'output/ffpp_keypoint_tracker_example_output'
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 1. SAVE JSON RESULTS FIRST
+        json_path = os.path.join(output_dir, 'resolution_scaling_results.json')
+        
+        # Enhance result with scale information
+        enhanced_result = result.copy()
+        enhanced_result['scale_test_info'] = {
+            'original_size': {'width': orig_w, 'height': orig_h},
+            'scaled_reference_size': {'width': scaled_w, 'height': scaled_h},
+            'scale_factor': scale_factor,
+            'target_size': {'width': target_img.shape[1], 'height': target_img.shape[0]}
+        }
+        
+        with open(json_path, 'w') as f:
+            json.dump(enhanced_result, f, indent=2)
+        
+        print(f"✅ Results saved: {json_path}")
+        
+        # 2. CREATE COMPARISON VISUALIZATION
+        # Create side-by-side visualization showing scaled reference and full target
+        vis_height = max(scaled_h, target_img.shape[0])
+        vis_width = scaled_w + target_img.shape[1] + 20  # 20px gap
+        vis_img = np.zeros((vis_height, vis_width, 3), dtype=np.uint8)
+        
+        # Place scaled reference image on the left
+        vis_img[:scaled_h, :scaled_w] = scaled_ref_img
+        
+        # Place target image on the right
+        target_start_x = scaled_w + 20
+        vis_img[:target_img.shape[0], target_start_x:target_start_x + target_img.shape[1]] = target_img
+        
+        # Draw scaled reference keypoints on the left
+        for i, kp in enumerate(scaled_ref_keypoints):
+            x, y = int(round(kp['x'])), int(round(kp['y']))
+            if 0 <= x < scaled_w and 0 <= y < scaled_h:
+                cv2.circle(vis_img, (x, y), 3, (255, 0, 0), -1)  # Blue for reference
+                cv2.putText(vis_img, str(i+1), (x+5, y-5), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Draw tracked keypoints on the right
+        for i, kp in enumerate(result['tracked_keypoints']):
+            x, y = int(round(kp['x'])) + target_start_x, int(round(kp['y']))
+            target_h, target_w = target_img.shape[:2]
+            if target_start_x <= x < target_start_x + target_w and 0 <= y < target_h:
+                cv2.circle(vis_img, (x, y), 3, (0, 255, 0), -1)  # Green for tracked
+                cv2.putText(vis_img, str(i+1), (x+5, y-5), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add labels
+        cv2.putText(vis_img, f"Reference ({scaled_w}x{scaled_h})", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(vis_img, f"Target ({target_img.shape[1]}x{target_img.shape[0]})", 
+                   (target_start_x + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        # Add scale factor info
+        cv2.putText(vis_img, f"Scale factor: {scale_factor:.3f}", (10, vis_height - 20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        vis_path = os.path.join(output_dir, 'resolution_scaling_visualization.jpg')
+        cv2.imwrite(vis_path, vis_img)
+        
+        print(f"✅ Visualization saved: {vis_path}")
+        
+        # 3. CREATE SINGLE TARGET IMAGE WITH TRACKING RESULTS
+        target_vis = target_img.copy()
+        for i, kp in enumerate(result['tracked_keypoints']):
+            x, y = int(round(kp['x'])), int(round(kp['y']))
+            h, w = target_vis.shape[:2]
+            
+            if 0 <= x < w and 0 <= y < h:
+                cv2.circle(target_vis, (x, y), 4, (0, 255, 0), -1)
+                cv2.putText(target_vis, str(i+1), (x+6, y-6), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        # Add scale info overlay
+        overlay_text = f"Tracked from {scale_factor:.1%} scale reference"
+        cv2.putText(target_vis, overlay_text, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        single_vis_path = os.path.join(output_dir, 'resolution_scaling_target_result.jpg')
+        cv2.imwrite(single_vis_path, target_vis)
+        
+        print(f"✅ Target result saved: {single_vis_path}")
+        
+    except Exception as e:
+        print(f"⚠️ Output creation failed: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return True
+
+
 def run_performance_benchmark():
     """
     Performance benchmark: Measure and compare different tracking modes
@@ -710,6 +890,7 @@ def main():
         ("Basic Tracking", test_basic_tracking),
         ("Bidirectional Validation", test_bidirectional_validation),
         ("Multiple References", test_multiple_references),
+        ("Resolution Scaling", test_resolution_scaling),
         ("Performance Benchmark", run_performance_benchmark)
     ]
     
