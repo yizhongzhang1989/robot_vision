@@ -3,7 +3,7 @@
 FlowFormer++ Keypoint Tracking Service
 =====================================
 
-Dedicated FastAPI service for keypoint tracking using FlowFormer++.
+Dedicated Flask service for keypoint tracking using FlowFormer++.
 Part of the Robot Vision Services architecture.
 """
 
@@ -14,11 +14,8 @@ import time
 import logging
 import traceback
 from typing import Dict, List, Optional
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-import uvicorn
+from flask import Flask, request, jsonify
+from werkzeug.datastructures import FileStorage
 import numpy as np
 from PIL import Image
 import io
@@ -66,43 +63,24 @@ def initialize_tracker():
         tracker_initialized = False
         return False
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="FlowFormer++ Keypoint Tracking Service",
-    description="High-performance keypoint tracking service with FlowFormer++ integration",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+# Initialize Flask app
+app = Flask(__name__)
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Helper function to create API responses
+def create_api_response(success: bool, message: str, data: Optional[Dict] = None, error: Optional[str] = None) -> Dict:
+    return {
+        'success': success,
+        'message': message,
+        'data': data,
+        'error': error,
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+    }
 
-# Pydantic models
-class APIResponse(BaseModel):
-    success: bool
-    message: str
-    data: Optional[Dict] = None
-    error: Optional[str] = None
-    timestamp: str
-
-class KeypointModel(BaseModel):
-    x: float = Field(..., description="X coordinate of the keypoint")
-    y: float = Field(..., description="Y coordinate of the keypoint")
-    id: Optional[int] = Field(None, description="Optional keypoint ID")
-    label: Optional[str] = Field(None, description="Optional keypoint label")
-
-def load_image_from_upload(file: UploadFile) -> np.ndarray:
+def load_image_from_upload(file: FileStorage) -> np.ndarray:
     """Load image from uploaded file and convert to numpy array."""
     try:
         # Read image file
-        image_data = file.file.read()
+        image_data = file.read()
         image = Image.open(io.BytesIO(image_data))
         
         # Convert to RGB if needed
@@ -113,12 +91,12 @@ def load_image_from_upload(file: UploadFile) -> np.ndarray:
         image_np = np.array(image)
         return image_np
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to load image: {str(e)}")
+        raise ValueError(f"Failed to load image: {str(e)}")
     finally:
-        file.file.seek(0)  # Reset file pointer for potential reuse
+        file.seek(0)  # Reset file pointer for potential reuse
 
-@app.get("/", response_class=HTMLResponse)
-async def service_info():
+@app.route("/")
+def service_info():
     """Service information endpoint."""
     return f"""
     <html>
@@ -153,8 +131,8 @@ async def service_info():
     </html>
     """
 
-@app.get("/health")
-async def health_check():
+@app.route("/health")
+def health_check():
     """Health check endpoint."""
     # Try to initialize tracker if not already done
     if not tracker_initialized:
@@ -171,18 +149,20 @@ async def health_check():
         "device": str(tracker.device) if tracker_initialized and tracker.device else "unknown"
     }
     
-    return APIResponse(
+    return jsonify(create_api_response(
         success=tracker_initialized,
         message="Service is running with FlowFormer++ tracking" if tracker_initialized else "Service degraded: tracker not initialized",
-        data=status,
-        timestamp=time.strftime('%Y-%m-%d %H:%M:%S')
-    )
+        data=status
+    ))
 
-@app.get("/references")
-async def list_references():
+@app.route("/references")
+def list_references():
     """List all stored reference images."""
     if not tracker_initialized:
-        raise HTTPException(status_code=503, detail="Tracker not initialized")
+        return jsonify(create_api_response(
+            success=False,
+            message="Tracker not initialized"
+        )), 503
     
     references = {}
     if hasattr(tracker, 'reference_data'):
@@ -193,33 +173,55 @@ async def list_references():
                 "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
             }
     
-    return APIResponse(
+    return jsonify(create_api_response(
         success=True,
         message=f"Found {len(references)} reference images",
         data={
             "references": references,
             "total_count": len(references),
             "default_reference": tracker.default_reference_key if tracker_initialized else None
-        },
-        timestamp=time.strftime('%Y-%m-%d %H:%M:%S')
-    )
+        }
+    ))
 
-@app.post("/set_reference")
-async def set_reference_image(
-    image: UploadFile = File(..., description="Reference image file"),
-    keypoints: str = Form(..., description="JSON string of keypoints"),
-    image_name: Optional[str] = Form(None, description="Optional reference image name")
-):
+@app.route("/set_reference", methods=["POST"])
+def set_reference_image():
     """Set reference image with keypoints using real FlowFormer++ tracker."""
     if not tracker_initialized:
-        raise HTTPException(status_code=503, detail="Tracker not initialized. Check /health endpoint.")
+        return jsonify(create_api_response(
+            success=False,
+            message="Tracker not initialized. Check /health endpoint."
+        )), 503
     
     try:
+        # Get uploaded image
+        if 'image' not in request.files:
+            return jsonify(create_api_response(
+                success=False,
+                message="No image file provided"
+            )), 400
+        
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify(create_api_response(
+                success=False,
+                message="No image file selected"
+            )), 400
+        
+        # Get form data
+        keypoints_str = request.form.get('keypoints')
+        image_name = request.form.get('image_name')
+        
+        if not keypoints_str:
+            return jsonify(create_api_response(
+                success=False,
+                message="No keypoints data provided"
+            )), 400
+        
         # Load image
-        image_np = load_image_from_upload(image)
+        image_np = load_image_from_upload(image_file)
         
         # Parse keypoints
-        keypoints_data = json.loads(keypoints)
+        keypoints_data = json.loads(keypoints_str)
         
         # Validate keypoints format
         for kp in keypoints_data:
@@ -234,7 +236,7 @@ async def set_reference_image(
         )
         
         if result.get('success', False):
-            return APIResponse(
+            return jsonify(create_api_response(
                 success=True,
                 message=f"Reference image set successfully with {len(keypoints_data)} keypoints",
                 data={
@@ -242,42 +244,64 @@ async def set_reference_image(
                     "image_name": result.get('key'),
                     "image_shape": result.get('regularized_image_shape'),
                     "processing_time": 0.0
-                },
-                timestamp=time.strftime('%Y-%m-%d %H:%M:%S')
-            )
+                }
+            ))
         else:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Failed to set reference image: {result.get('error', 'unknown error')}"
-            )
+            return jsonify(create_api_response(
+                success=False,
+                message=f"Failed to set reference image: {result.get('error', 'unknown error')}"
+            )), 500
         
     except json.JSONDecodeError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid keypoints JSON: {str(e)}")
+        return jsonify(create_api_response(
+            success=False,
+            message=f"Invalid keypoints JSON: {str(e)}"
+        )), 400
     except Exception as e:
         logger.error(f"Error in set_reference: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        return jsonify(create_api_response(
+            success=False,
+            message=f"Error: {str(e)}"
+        )), 500
 
-@app.post("/track_keypoints")
-async def track_keypoints(
-    image: UploadFile = File(..., description="Target image file"),
-    reference_name: Optional[str] = Form(None, description="Reference image name"),
-    bidirectional: bool = Form(False, description="Enable bidirectional validation")
-):
+@app.route("/track_keypoints", methods=["POST"])
+def track_keypoints():
     """Track keypoints using real FlowFormer++ model."""
     if not tracker_initialized:
-        raise HTTPException(status_code=503, detail="Tracker not initialized. Check /health endpoint.")
+        return jsonify(create_api_response(
+            success=False,
+            message="Tracker not initialized. Check /health endpoint."
+        )), 503
     
     # Check if we have any reference images
     if not hasattr(tracker, 'reference_data') or not tracker.reference_data:
-        raise HTTPException(
-            status_code=400,
-            detail="No reference images available. Use /set_reference endpoint first."
-        )
+        return jsonify(create_api_response(
+            success=False,
+            message="No reference images available. Use /set_reference endpoint first."
+        )), 400
     
     try:
+        # Get uploaded image
+        if 'image' not in request.files:
+            return jsonify(create_api_response(
+                success=False,
+                message="No image file provided"
+            )), 400
+        
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify(create_api_response(
+                success=False,
+                message="No image file selected"
+            )), 400
+        
+        # Get form data
+        reference_name = request.form.get('reference_name')
+        bidirectional = request.form.get('bidirectional', 'false').lower() == 'true'
+        
         # Load target image
-        target_image_np = load_image_from_upload(image)
+        target_image_np = load_image_from_upload(image_file)
         
         # Use tracker to track keypoints
         result = tracker.track_keypoints(
@@ -287,7 +311,7 @@ async def track_keypoints(
         )
         
         if result.get('success', False):
-            return APIResponse(
+            return jsonify(create_api_response(
                 success=True,
                 message=f"Keypoint tracking completed successfully",
                 data={
@@ -298,22 +322,77 @@ async def track_keypoints(
                     "bidirectional_enabled": bidirectional,
                     "bidirectional_stats": result.get('bidirectional_stats') if bidirectional else None,
                     "device_used": str(tracker.device) if tracker.device else "unknown"
-                },
-                timestamp=time.strftime('%Y-%m-%d %H:%M:%S')
-            )
+                }
+            ))
         else:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Tracking failed: {result.get('error', 'unknown error')}"
-            )
+            return jsonify(create_api_response(
+                success=False,
+                message=f"Tracking failed: {result.get('error', 'unknown error')}"
+            )), 500
         
     except Exception as e:
         logger.error(f"Error in track_keypoints: {str(e)}")
         logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+        return jsonify(create_api_response(
+            success=False,
+            message=f"Error: {str(e)}"
+        )), 500
 
-@app.on_event("startup")
-async def startup_event():
+@app.route("/docs")
+def api_docs():
+    """Simple API documentation."""
+    docs_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>FlowFormer++ Keypoint Tracking API</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+            .method { font-weight: bold; color: #0066cc; }
+            .method.post { color: #ff6600; }
+        </style>
+    </head>
+    <body>
+        <h1>FlowFormer++ Keypoint Tracking API</h1>
+        
+        <div class="endpoint">
+            <div class="method">GET /</div>
+            <p>Service information page</p>
+        </div>
+        
+        <div class="endpoint">
+            <div class="method">GET /health</div>
+            <p>Service health check and tracker status</p>
+        </div>
+        
+        <div class="endpoint">
+            <div class="method">GET /references</div>
+            <p>List all stored reference images</p>
+        </div>
+        
+        <div class="endpoint">
+            <div class="method post">POST /set_reference</div>
+            <p>Set reference image with keypoints</p>
+            <p><strong>Form Data:</strong> image (file), keypoints (JSON string), image_name (optional)</p>
+        </div>
+        
+        <div class="endpoint">
+            <div class="method post">POST /track_keypoints</div>
+            <p>Track keypoints using FlowFormer++ model</p>
+            <p><strong>Form Data:</strong> image (file), reference_name (optional), bidirectional (boolean)</p>
+        </div>
+        
+        <div class="endpoint">
+            <div class="method">GET /docs</div>
+            <p>This API documentation</p>
+        </div>
+    </body>
+    </html>
+    """
+    return docs_html
+
+def startup_service():
     """Initialize the tracker when the app starts."""
     logger.info("🚀 Starting FlowFormer++ Keypoint Tracking Service...")
     if TRACKER_AVAILABLE:
@@ -332,12 +411,12 @@ if __name__ == "__main__":
     print("   - 🚀 GPU acceleration")  
     print("   - 🔧 Part of Robot Vision Services")
     print("🌐 Access at: http://localhost:8001")
-    print("📖 API docs: http://localhost:8001/docs")
+    print("📖 Flask routes: /health, /references, /set_reference, /track_keypoints")
     
-    uvicorn.run(
-        app,
+    startup_service()
+    
+    app.run(
         host="0.0.0.0",
         port=8001,
-        reload=False,
-        log_level="info"
+        debug=False
     )
