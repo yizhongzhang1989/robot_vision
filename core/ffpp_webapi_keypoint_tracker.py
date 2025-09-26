@@ -1,5 +1,17 @@
 """
-FlowFormer++ Web API Keypoint Tracker Module
+FlThis module provides the FFPPWebAPIKeypointTracker class that interfaces with
+the FlowFormer++ Flask web service for keypoint tracking. It maintains the same
+interface as the direct FFPPKeypointTracker but uses HTTP API calls instead of
+direct model inference.
+
+Features:
+- Implements the standard KeypointTracker interface for consistency
+- HTTP client for FlowFormer++ Flask service
+- Compressed JPG with base64 encoding for efficient image transmission
+- Pure JSON-based communication with service (no multipart forms)
+- Same three-method interface (set_reference_image + track_keypoints + remove_reference_image)
+- Error handling and service availability checking
+- Compatible with existing code that uses FFPPKeypointTrackerb API Keypoint Tracker Module
 ===========================================
 
 Web API client for FlowFormer++ keypoint tracking service.
@@ -37,6 +49,7 @@ import os
 import sys
 import time
 import json
+import base64
 import requests
 import numpy as np
 from pathlib import Path
@@ -89,8 +102,8 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
     Required Web Service Endpoints:
         GET  /health         - Service health check and status
         GET  /references     - List stored reference images with metadata
-        POST /set_reference  - Set reference image with keypoints (multipart upload)
-        POST /track_keypoints - Track keypoints in target image (multipart upload)
+        POST /set_reference  - Set reference image with keypoints (JSON with base64 image)
+        POST /track_keypoints - Track keypoints in target image (JSON with base64 image)
     
     Attributes:
         service_url (str): Base URL of the FlowFormer++ web service (default: http://localhost:8001)
@@ -142,11 +155,11 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         
         This is the first of two main public methods. Use this to store reference 
         images with their associated keypoints on the web service for later tracking operations.
-        The image and keypoints are uploaded to the FlowFormer++ web service via HTTP API.
+        The image and keypoints are uploaded to the FlowFormer++ web service via HTTP JSON API.
         
         Args:
             image: Reference image as numpy array (H, W, 3) in RGB format.
-                  Image will be converted to PNG format for HTTP upload.
+                  Image will be compressed to JPG and base64 encoded for JSON transmission.
             keypoints: Optional list of keypoint dictionaries with 'x', 'y' keys.
                       If None, defaults to empty list. Each keypoint should be a dict
                       like {'x': float, 'y': float} in image pixel coordinates.
@@ -159,7 +172,8 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             On failure, includes 'error' with detailed error message.
             
         Note:
-            The image is automatically converted from numpy array to PNG bytes for upload.
+            The image is automatically converted to compressed JPG and base64 encoded for JSON.
+            This provides efficient network transfer with good image quality (85% JPG quality).
             Network errors, service errors, and validation errors are handled gracefully.
             Local reference tracking is updated to maintain consistency with base class interface.
         """
@@ -174,26 +188,22 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     'error': 'Keypoints must be a list of dictionaries'
                 }
             
-            # Prepare image data
-            image_bytes = self._numpy_to_pil_bytes(image)
-            
-            # Prepare form data
-            files = {
-                'image': ('reference.png', image_bytes, 'image/png')
-            }
+            # Prepare JSON data with base64 encoded image
+            image_base64 = self._numpy_to_base64_jpg(image)
             
             data = {
-                'keypoints': json.dumps(keypoints)
+                'image_base64': image_base64,
+                'keypoints': keypoints
             }
             
             if image_name:
                 data['image_name'] = image_name
             
-            # Make API call
+            # Make API call with JSON
             response = self.session.post(
                 f"{self.service_url}/set_reference",
-                files=files,
-                data=data,
+                json=data,
+                headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
             )
             
@@ -252,7 +262,7 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         
         Args:
             target_image: Target image as numpy array (H, W, 3) in RGB format.
-                         Image will be converted to PNG format for HTTP upload.
+                         Image will be compressed to JPG and base64 encoded for JSON transmission.
             reference_name: Name of stored reference image to use on server. If None, uses default reference.
                            Must match a reference name previously set via set_reference_image().
             bidirectional: If True, request bidirectional flow validation from service. Tracks keypoints
@@ -270,8 +280,8 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         Note:
             You must call set_reference_image() first to store a reference image with keypoints
             on the web service before using this function. The target image is automatically
-            converted to PNG bytes for HTTP upload. Network errors and service errors are
-            handled gracefully with detailed error reporting.
+            compressed to JPG and base64 encoded for efficient JSON transmission. Network errors 
+            and service errors are handled gracefully with detailed error reporting.
             
             Bidirectional mode: Service computes ref→target flow, then target→ref flow to validate
             tracking accuracy. Returns consistency distance for each keypoint via 'bidirectional_stats'.
@@ -284,26 +294,22 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
                     'error': 'No reference images set. Call set_reference_image() first.'
                 }
             
-            # Prepare image data
-            image_bytes = self._numpy_to_pil_bytes(target_image)
-            
-            # Prepare form data
-            files = {
-                'image': ('target.png', image_bytes, 'image/png')
-            }
+            # Prepare JSON data with base64 encoded image
+            image_base64 = self._numpy_to_base64_jpg(target_image)
             
             data = {
-                'bidirectional': 'true' if bidirectional else 'false'
+                'image_base64': image_base64,
+                'bidirectional': bidirectional
             }
             
             if reference_name:
                 data['reference_name'] = reference_name
             
-            # Make API call
+            # Make API call with JSON
             response = self.session.post(
                 f"{self.service_url}/track_keypoints",
-                files=files,
-                data=data,
+                json=data,
+                headers={'Content-Type': 'application/json'},
                 timeout=self.timeout
             )
             
@@ -562,24 +568,26 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             print(f"❌ Cannot connect to FlowFormer++ Web API service at {self.service_url}: {e}")
             return False
     
-    def _numpy_to_pil_bytes(self, image: np.ndarray) -> bytes:
-        """Convert numpy array to PIL Image bytes for HTTP multipart upload.
+    def _numpy_to_base64_jpg(self, image: np.ndarray, quality: int = 85) -> str:
+        """Convert numpy array to base64 encoded JPG string for JSON transmission.
         
-        Internal method for preparing image data for web API transmission.
-        Handles data type conversion and PNG encoding for reliable HTTP upload.
+        Internal method for preparing compressed image data for web API JSON transmission.
+        Handles data type conversion and JPG compression for efficient network transfer.
         
         Args:
             image: RGB image as numpy array (H, W, 3) in any numeric dtype.
                   Values are automatically normalized to uint8 range if needed.
+            quality: JPG compression quality (1-100, default 85). Higher = better quality, larger size.
             
         Returns:
-            bytes: Image data encoded as PNG bytes suitable for HTTP multipart upload.
-                   Uses lossless PNG compression for maintaining image quality.
+            str: Image data encoded as base64 JPG string suitable for JSON transmission.
+                 Uses JPG compression for efficient network transfer with good quality.
                    
         Note:
             Automatically converts float images to uint8 by scaling [0,1] → [0,255].
-            Uses PIL for reliable PNG encoding with proper format handling.
-            PNG format chosen for lossless compression and broad compatibility.
+            Uses PIL for reliable JPG encoding with customizable compression quality.
+            JPG format chosen for compact size with acceptable quality loss for API transmission.
+            Base64 encoding allows binary data to be included in JSON payloads.
         """
         # Ensure image is in the correct format
         if image.dtype != np.uint8:
@@ -588,12 +596,15 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         # Convert to PIL Image
         pil_image = Image.fromarray(image, 'RGB')
         
-        # Convert to bytes
+        # Convert to JPG bytes with compression
         img_bytes = io.BytesIO()
-        pil_image.save(img_bytes, format='PNG')
+        pil_image.save(img_bytes, format='JPEG', quality=quality)
         img_bytes.seek(0)
         
-        return img_bytes.getvalue()
+        # Encode to base64 string
+        image_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+        
+        return image_base64
 
 
 def main():

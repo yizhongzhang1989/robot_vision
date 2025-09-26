@@ -13,6 +13,7 @@ import json
 import time
 import logging
 import traceback
+import base64
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify
 from werkzeug.datastructures import FileStorage
@@ -75,6 +76,50 @@ def create_api_response(success: bool, message: str, data: Optional[Dict] = None
         'error': error,
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
     }
+
+def decode_base64_image(image_base64: str) -> np.ndarray:
+    """Decode base64 encoded JPG image and convert to numpy array."""
+    try:
+        # Remove data URL prefix if present
+        if ',' in image_base64:
+            image_base64 = image_base64.split(',', 1)[1]
+        
+        # Decode base64 to bytes
+        image_bytes = base64.b64decode(image_base64)
+        
+        # Load image from bytes
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Convert to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Convert to numpy array
+        image_np = np.array(image)
+        return image_np
+    except Exception as e:
+        raise ValueError(f"Failed to decode base64 image: {str(e)}")
+
+def encode_image_to_base64(image_np: np.ndarray, quality: int = 85) -> str:
+    """Encode numpy image array to base64 JPG string."""
+    try:
+        # Ensure image is in the correct format
+        if image_np.dtype != np.uint8:
+            image_np = (image_np * 255).astype(np.uint8)
+        
+        # Convert to PIL Image
+        pil_image = Image.fromarray(image_np, 'RGB')
+        
+        # Convert to JPG bytes with compression
+        img_bytes = io.BytesIO()
+        pil_image.save(img_bytes, format='JPEG', quality=quality)
+        img_bytes.seek(0)
+        
+        # Encode to base64
+        image_base64 = base64.b64encode(img_bytes.getvalue()).decode('utf-8')
+        return image_base64
+    except Exception as e:
+        raise ValueError(f"Failed to encode image to base64: {str(e)}")
 
 def load_image_from_upload(file: FileStorage) -> np.ndarray:
     """Load image from uploaded file and convert to numpy array."""
@@ -193,35 +238,42 @@ def set_reference_image():
         )), 503
     
     try:
-        # Get uploaded image
-        if 'image' not in request.files:
+        # Get JSON data
+        if not request.is_json:
             return jsonify(create_api_response(
                 success=False,
-                message="No image file provided"
+                message="Request must be JSON with base64 encoded image"
             )), 400
         
-        image_file = request.files['image']
-        if image_file.filename == '':
+        data = request.get_json()
+        
+        # Check required fields
+        if 'image_base64' not in data:
             return jsonify(create_api_response(
                 success=False,
-                message="No image file selected"
+                message="No image_base64 field provided"
             )), 400
         
-        # Get form data
-        keypoints_str = request.form.get('keypoints')
-        image_name = request.form.get('image_name')
-        
-        if not keypoints_str:
+        if 'keypoints' not in data:
             return jsonify(create_api_response(
                 success=False,
-                message="No keypoints data provided"
+                message="No keypoints field provided"
             )), 400
         
-        # Load image
-        image_np = load_image_from_upload(image_file)
+        # Get data fields
+        image_base64 = data['image_base64']
+        keypoints_data = data['keypoints']
+        image_name = data.get('image_name')
         
-        # Parse keypoints
-        keypoints_data = json.loads(keypoints_str)
+        # Decode and load image
+        image_np = decode_base64_image(image_base64)
+        
+        # Validate keypoints format
+        if not isinstance(keypoints_data, list):
+            return jsonify(create_api_response(
+                success=False,
+                message="Keypoints must be a list"
+            )), 400
         
         # Validate keypoints format
         for kp in keypoints_data:
@@ -282,26 +334,29 @@ def track_keypoints():
         )), 400
     
     try:
-        # Get uploaded image
-        if 'image' not in request.files:
+        # Get JSON data
+        if not request.is_json:
             return jsonify(create_api_response(
                 success=False,
-                message="No image file provided"
+                message="Request must be JSON with base64 encoded image"
             )), 400
         
-        image_file = request.files['image']
-        if image_file.filename == '':
+        data = request.get_json()
+        
+        # Check required fields
+        if 'image_base64' not in data:
             return jsonify(create_api_response(
                 success=False,
-                message="No image file selected"
+                message="No image_base64 field provided"
             )), 400
         
-        # Get form data
-        reference_name = request.form.get('reference_name')
-        bidirectional = request.form.get('bidirectional', 'false').lower() == 'true'
+        # Get data fields
+        image_base64 = data['image_base64']
+        reference_name = data.get('reference_name')
+        bidirectional = data.get('bidirectional', False)
         
-        # Load target image
-        target_image_np = load_image_from_upload(image_file)
+        # Decode target image
+        target_image_np = decode_base64_image(image_base64)
         
         # Use tracker to track keypoints
         result = tracker.track_keypoints(
@@ -374,13 +429,13 @@ def api_docs():
         <div class="endpoint">
             <div class="method post">POST /set_reference</div>
             <p>Set reference image with keypoints</p>
-            <p><strong>Form Data:</strong> image (file), keypoints (JSON string), image_name (optional)</p>
+            <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "keypoints": [...], "image_name": "optional"}</p>
         </div>
         
         <div class="endpoint">
             <div class="method post">POST /track_keypoints</div>
             <p>Track keypoints using FlowFormer++ model</p>
-            <p><strong>Form Data:</strong> image (file), reference_name (optional), bidirectional (boolean)</p>
+            <p><strong>JSON Body:</strong> {"image_base64": "base64_jpg_string", "reference_name": "optional", "bidirectional": false}</p>
         </div>
         
         <div class="endpoint">
