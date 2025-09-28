@@ -1,0 +1,3 @@
+# Placeholder for favicon.ico
+# In a real implementation, this would be a binary ICO file
+# For now, create an empty file that can be replaced later

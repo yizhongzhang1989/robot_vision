@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Vision Control Center</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/favicon.ico') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- Header Section -->
+        <div class="header">
+            <h1>🤖 Robot Vision Control Center</h1>
+            <p>Centralized management for robot vision services</p>
+            <div class="info-banner">
+                <strong>🔗 Smart Address Resolution:</strong> Service links automatically match how you access this gateway
+                <br>• <strong>Hostname access:</strong> Links use hostname for consistency
+                <br>• <strong>IP access:</strong> Links use the same IP address
+            </div>
+        </div>
+        
+        <!-- Services Grid -->
+        <div class="services-grid" id="services-grid">
+            <!-- Services will be dynamically loaded here -->
+        </div>
+        
+        <!-- Control Panel -->
+        <div class="control-panel">
+            <h2>🎛️ Control Panel</h2>
+            <div class="control-actions">
+                <button onclick="refreshServices()" class="btn btn-success">
+                    <span id="refresh-text">🔄 Refresh Status</span>
+                </button>
+                <a href="/services/status" class="btn btn-info">📊 Detailed Status</a>
+                <a href="/network/info" class="btn btn-info">🌐 Network Info</a>
+                <a href="/docs" class="btn btn-primary">📖 Gateway API</a>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2025 Robot Vision Control Center | Version 2.0.0</p>
+        </footer>
+    </div>
+    
+    <!-- Service Card Template (hidden) -->
+    <template id="service-card-template">
+        <div class="service-card" data-service-id="">
+            <h3 class="service-name"></h3>
+            <p class="service-description"></p>
+            <div class="service-info">
+                <span class="port"></span>
+                <span class="status"></span>
+            </div>
+            <div class="service-actions">
+                <!-- Action buttons will be inserted here -->
+            </div>
+        </div>
+    </template>
+    
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
