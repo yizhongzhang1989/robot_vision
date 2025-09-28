@@ -53,6 +53,10 @@ print_progress() {
     echo -e "${CYAN}▶${NC} $1"
 }
 
+print_step_number() {
+    echo -e "${PURPLE}[$1]${NC} $2"
+}
+
 # Function to check if command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1

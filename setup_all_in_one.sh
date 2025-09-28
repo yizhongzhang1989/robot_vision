@@ -280,7 +280,7 @@ run_complete_setup() {
         print_step_number "$step_num/$total_steps" "$(echo "$step" | tr '_' ' ' | tr '[:lower:]' '[:upper:]')"
         
         if execute_step "$step"; then
-            ((completed_steps++))
+            completed_steps=$((completed_steps + 1))
         else
             failed_steps+=("$step")
             
