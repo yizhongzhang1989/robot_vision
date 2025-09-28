@@ -3,15 +3,16 @@
 class APICallMonitor {
     constructor() {
         this.refreshInterval = null;
+        this.eventSource = null;
+        this.isRealTimeEnabled = true;
         this.init();
     }
 
     init() {
         this.setupEventListeners();
         this.checkServiceStatus();
-        this.refreshAPILogs(); // Initial load
-        this.startAutoRefresh();
-        console.log('API Call Monitor initialized');
+        this.connectRealTime(); // Start real-time connection
+        console.log('API Call Monitor initialized with real-time updates');
     }
 
     setupEventListeners() {
@@ -33,29 +34,161 @@ class APICallMonitor {
             });
         }
 
-        // Auto-refresh toggle
-        const autoRefreshToggle = document.getElementById('auto-refresh-toggle');
-        if (autoRefreshToggle) {
-            autoRefreshToggle.addEventListener('change', (e) => {
+        // Real-time toggle (replaces auto-refresh)
+        const realTimeToggle = document.getElementById('auto-refresh-toggle');
+        if (realTimeToggle) {
+            realTimeToggle.addEventListener('change', (e) => {
                 if (e.target.checked) {
-                    this.startAutoRefresh();
+                    this.connectRealTime();
                 } else {
-                    this.stopAutoRefresh();
+                    this.disconnectRealTime();
+                    this.startPollingFallback();
                 }
             });
         }
     }
 
-    startAutoRefresh() {
-        // Refresh API logs every 5 seconds
+    connectRealTime() {
+        // Disconnect any existing connection
+        this.disconnectRealTime();
+        
+        try {
+            console.log('Connecting to real-time API monitoring...');
+            this.eventSource = new EventSource('/api_events');
+            
+            this.eventSource.onopen = () => {
+                console.log('✅ Real-time connection established');
+                this.isRealTimeEnabled = true;
+                this.showNotification('Real-time monitoring connected', 'success');
+                this.updateConnectionStatus('connected');
+            };
+            
+            this.eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    this.handleRealTimeEvent(data);
+                } catch (error) {
+                    console.error('Error parsing SSE data:', error);
+                }
+            };
+            
+            this.eventSource.onerror = (error) => {
+                console.error('Real-time connection error:', error);
+                this.updateConnectionStatus('error');
+                
+                // Auto-reconnect after 5 seconds
+                setTimeout(() => {
+                    if (this.isRealTimeEnabled) {
+                        console.log('Attempting to reconnect...');
+                        this.connectRealTime();
+                    }
+                }, 5000);
+            };
+            
+        } catch (error) {
+            console.error('Failed to establish real-time connection:', error);
+            this.startPollingFallback();
+        }
+    }
+
+    disconnectRealTime() {
+        if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+        }
+        this.isRealTimeEnabled = false;
+        this.updateConnectionStatus('disconnected');
+    }
+
+    handleRealTimeEvent(event) {
+        console.log('Real-time event received:', event.type);
+        
+        switch (event.type) {
+            case 'connected':
+                console.log(event.message);
+                break;
+                
+            case 'initial_data':
+                this.updateAPILogsTable(event.data.logs);
+                this.updateStats(event.data);
+                break;
+                
+            case 'api_call_update':
+                // Add new API call to the top of the list
+                this.addNewAPICall(event.data.new_call);
+                this.updateStats({total: event.data.total_calls, logs: [event.data.new_call]});
+                this.showNotification(`New ${event.data.new_call.endpoint} call completed!`, 'realtime');
+                break;
+                
+            case 'keepalive':
+                // Connection is alive, no action needed
+                break;
+                
+            default:
+                console.log('Unknown event type:', event.type);
+        }
+    }
+
+    addNewAPICall(newCall) {
+        const feedContainer = document.getElementById('api-call-feed');
+        if (!feedContainer) return;
+
+        // Create the new call card
+        const newCallElement = document.createElement('div');
+        newCallElement.innerHTML = this.createVisualCallCard(newCall);
+        
+        // Add highlight animation for new calls
+        const callCard = newCallElement.firstElementChild;
+        if (callCard) {
+            callCard.classList.add('new-call-highlight');
+            
+            // Insert at the top
+            if (feedContainer.firstChild) {
+                feedContainer.insertBefore(callCard, feedContainer.firstChild);
+            } else {
+                feedContainer.appendChild(callCard);
+            }
+            
+            // Remove highlight after animation
+            setTimeout(() => {
+                callCard.classList.remove('new-call-highlight');
+            }, 3000);
+            
+            // Limit the number of displayed calls to prevent memory issues
+            const maxCalls = 20;
+            const allCalls = feedContainer.children;
+            while (allCalls.length > maxCalls) {
+                feedContainer.removeChild(allCalls[allCalls.length - 1]);
+            }
+        }
+    }
+
+    updateConnectionStatus(status) {
+        const statusElement = document.querySelector('.connection-status');
+        if (statusElement) {
+            statusElement.className = `connection-status ${status}`;
+            const statusText = {
+                'connected': '🟢 Real-time',
+                'disconnected': '🔴 Offline',
+                'error': '🟡 Reconnecting...'
+            };
+            statusElement.textContent = statusText[status] || status;
+        }
+    }
+
+    startPollingFallback() {
+        console.log('Starting polling fallback...');
+        this.stopPollingFallback();
+        
+        // Refresh API logs every 5 seconds as fallback
         this.refreshInterval = setInterval(() => {
             this.refreshAPILogs();
         }, 5000);
         
-        console.log('Started auto-refresh for API call monitoring');
+        this.showNotification('Using polling mode (real-time unavailable)', 'warning');
     }
 
-    stopAutoRefresh() {
+    stopPollingFallback() {
         if (this.refreshInterval) {
             clearInterval(this.refreshInterval);
             this.refreshInterval = null;
@@ -341,7 +474,8 @@ document.addEventListener('DOMContentLoaded', () => {
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
     if (window.apiMonitor) {
-        window.apiMonitor.stopAutoRefresh();
+        window.apiMonitor.disconnectRealTime();
+        window.apiMonitor.stopPollingFallback();
     }
 });
 

@@ -187,9 +187,12 @@
                     <button class="btn btn-secondary" id="refresh-api-logs" title="Manually refresh API logs">
                         🔄 Refresh Now
                     </button>
-                    <div class="auto-refresh-toggle" style="display: flex; align-items: center; gap: 5px;">
-                        <input type="checkbox" id="auto-refresh-toggle" checked>
-                        <label for="auto-refresh-toggle" style="font-size: 0.9em; color: #7f8c8d;">Auto-refresh (5s)</label>
+                    <div class="realtime-controls" style="display: flex; align-items: center; gap: 10px;">
+                        <div class="connection-status connected">🟢 Real-time</div>
+                        <div class="auto-refresh-toggle" style="display: flex; align-items: center; gap: 5px;">
+                            <input type="checkbox" id="auto-refresh-toggle" checked>
+                            <label for="auto-refresh-toggle" style="font-size: 0.9em; color: #7f8c8d;">Real-time updates</label>
+                        </div>
                     </div>
                 </div>
 

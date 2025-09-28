@@ -1378,4 +1378,106 @@ body {
         gap: 10px;
         text-align: center;
     }
+    
+    .realtime-controls {
+        flex-direction: column !important;
+        align-items: center !important;
+        gap: 5px !important;
+    }
+}
+
+/* Real-time connection status styles */
+.connection-status {
+    font-size: 0.9em;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    transition: all 0.3s ease;
+}
+
+.connection-status.connected {
+    color: #27ae60;
+    background: rgba(39, 174, 96, 0.1);
+    border-color: rgba(39, 174, 96, 0.3);
+}
+
+.connection-status.disconnected {
+    color: #e74c3c;
+    background: rgba(231, 76, 60, 0.1);
+    border-color: rgba(231, 76, 60, 0.3);
+}
+
+.connection-status.error {
+    color: #f39c12;
+    background: rgba(243, 156, 18, 0.1);
+    border-color: rgba(243, 156, 18, 0.3);
+    animation: pulse 2s infinite;
+}
+
+/* New API call highlight animation */
+.new-call-highlight {
+    animation: newCallGlow 3s ease-out;
+    position: relative;
+    overflow: hidden;
+}
+
+.new-call-highlight::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, 
+        transparent, 
+        rgba(52, 152, 219, 0.3), 
+        transparent
+    );
+    animation: slideHighlight 3s ease-out;
+    z-index: 1;
+}
+
+@keyframes newCallGlow {
+    0% {
+        box-shadow: 0 0 20px rgba(52, 152, 219, 0.8);
+        border: 2px solid rgba(52, 152, 219, 0.6);
+    }
+    100% {
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        border: 2px solid rgba(255, 255, 255, 0.2);
+    }
+}
+
+@keyframes slideHighlight {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Enhanced notification styles for real-time events */
+.notification.realtime {
+    background: linear-gradient(45deg, #3498db, #2980b9);
+    border-left: 4px solid #2ecc71;
+}
+
+.notification.realtime::before {
+    content: '⚡ ';
+    font-weight: bold;
 }

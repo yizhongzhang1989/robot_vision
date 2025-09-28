@@ -19,10 +19,12 @@ import uuid
 from datetime import datetime
 from collections import deque
 from typing import Dict, List, Optional
-from flask import Flask, request, jsonify, render_template, send_from_directory
+from flask import Flask, request, jsonify, render_template, send_from_directory, Response, stream_template
 import numpy as np
 from PIL import Image, ImageDraw
 import io
+import queue
+import threading
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -46,6 +48,46 @@ tracker_initialized = False
 
 # API call logging system
 api_call_log = deque(maxlen=50)  # Keep last 50 API calls
+
+# SSE event broadcasting system
+sse_clients = set()
+sse_queue = queue.Queue()
+
+class SSEClient:
+    def __init__(self):
+        self.queue = queue.Queue()
+        self.active = True
+    
+    def put(self, data):
+        if self.active:
+            try:
+                self.queue.put_nowait(data)
+            except queue.Full:
+                pass
+    
+    def close(self):
+        self.active = False
+
+def broadcast_sse_event(event_type: str, data: dict):
+    """Broadcast an event to all connected SSE clients."""
+    global sse_clients
+    
+    event_data = {
+        'type': event_type,
+        'data': data,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    # Remove disconnected clients
+    disconnected_clients = set()
+    for client in sse_clients:
+        if not client.active:
+            disconnected_clients.add(client)
+        else:
+            client.put(event_data)
+    
+    # Clean up disconnected clients
+    sse_clients -= disconnected_clients
 
 def log_api_call(endpoint: str, method: str, data: dict, result: dict, processing_time: float):
     """Log API call for dashboard display with full image and metadata storage."""
@@ -148,6 +190,12 @@ def log_api_call(endpoint: str, method: str, data: dict, result: dict, processin
                 logger.error(f"Failed to save target image: {str(e)}")
     
     api_call_log.appendleft(call_record)  # Add to front (newest first)
+    
+    # Broadcast real-time update to SSE clients
+    broadcast_sse_event('api_call_update', {
+        'new_call': call_record,
+        'total_calls': len(api_call_log)
+    })
 
 def initialize_tracker():
     """Initialize the FlowFormer++ tracker."""
@@ -205,6 +253,9 @@ def save_image_and_get_url(image_data, call_id, image_type):
                 pil_image.save(buffer, format='PNG')
                 image_bytes = buffer.getvalue()
         
+        # Ensure directory exists
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        
         # Generate filename
         filename = f"{call_id}_{image_type}.png"
         filepath = os.path.join(IMAGES_DIR, filename)
@@ -224,6 +275,15 @@ def save_image_and_get_url(image_data, call_id, image_type):
 @app.route('/api_images/<filename>')
 def serve_api_image(filename):
     """Serve API images from the images directory"""
+    # Ensure directory exists
+    os.makedirs(IMAGES_DIR, exist_ok=True)
+    
+    # Check if file exists
+    filepath = os.path.join(IMAGES_DIR, filename)
+    if not os.path.exists(filepath):
+        logger.warning(f"Image file not found: {filename}")
+        return "Image not found", 404
+        
     return send_from_directory(IMAGES_DIR, filename)
 
 # Helper function to create API responses
@@ -387,6 +447,50 @@ def get_api_logs():
         'per_page': per_page,
         'has_more': end_idx < len(api_call_log)
     })
+
+@app.route("/api_events")
+def api_events():
+    """Server-Sent Events endpoint for real-time API monitoring."""
+    def event_stream():
+        global sse_clients
+        client = SSEClient()
+        sse_clients.add(client)
+        
+        try:
+            # Send initial connection message
+            yield f"data: {json.dumps({'type': 'connected', 'message': 'Real-time monitoring started'})}\n\n"
+            
+            # Send current API logs on connection
+            current_logs = list(api_call_log)[:5]  # Last 5 calls
+            if current_logs:
+                yield f"data: {json.dumps({'type': 'initial_data', 'data': {'logs': current_logs, 'total': len(api_call_log)}})}\n\n"
+            
+            # Stream real-time events
+            while client.active:
+                try:
+                    # Wait for new events with timeout to allow for keepalive
+                    event = client.queue.get(timeout=30)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except queue.Empty:
+                    # Send keepalive ping
+                    yield f"data: {json.dumps({'type': 'keepalive', 'timestamp': datetime.now().isoformat()})}\n\n"
+                    
+        except Exception as e:
+            logger.error(f"SSE client error: {e}")
+        finally:
+            client.close()
+            sse_clients.discard(client)
+    
+    return Response(
+        event_stream(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Cache-Control'
+        }
+    )
 
 @app.route("/validate_tracking", methods=["POST"])
 def validate_tracking():
