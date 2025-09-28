@@ -10,23 +10,13 @@ source "$SCRIPT_DIR/setup_utils.sh"
 
 set -e  # Exit on any error
 
-# Model configurations
-declare -A FLOWFORMER_MODELS=(
-    ["flowformer_sintel.pth"]="https://github.com/drinkingcoder/FlowFormerPlusPlus/releases/download/v1.0/flowformer_sintel.pth"
-    ["flowformer_things.pth"]="https://github.com/drinkingcoder/FlowFormerPlusPlus/releases/download/v1.0/flowformer_things.pth"
-    ["flowformer_kitti.pth"]="https://github.com/drinkingcoder/FlowFormerPlusPlus/releases/download/v1.0/flowformer_kitti.pth"
-)
-
-declare -A MODEL_SIZES=(
-    ["flowformer_sintel.pth"]="350MB"
-    ["flowformer_things.pth"]="350MB"
-    ["flowformer_kitti.pth"]="350MB"
-)
-
+# Model information
 declare -A MODEL_DESCRIPTIONS=(
-    ["flowformer_sintel.pth"]="FlowFormer++ trained on Sintel dataset (best for synthetic/clean images)"
-    ["flowformer_things.pth"]="FlowFormer++ trained on FlyingThings3D (general purpose)"
-    ["flowformer_kitti.pth"]="FlowFormer++ trained on KITTI dataset (best for automotive/outdoor)"
+    ["sintel.pth"]="FlowFormer++ trained on Sintel dataset (best for synthetic/clean images)"
+    ["things.pth"]="FlowFormer++ trained on FlyingThings3D (general purpose)"
+    ["things_288960.pth"]="FlowFormer++ trained on FlyingThings3D (alternative checkpoint)"
+    ["kitti.pth"]="FlowFormer++ trained on KITTI dataset (best for automotive/outdoor)"
+    ["chairs.pth"]="FlowFormer++ trained on FlyingChairs dataset (lightweight model)"
 )
 
 # Function to check available disk space
@@ -130,131 +120,100 @@ download_flowformer_models() {
     
     print_step "Downloading FlowFormer++ models..."
     
-    local checkpoint_dir="$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer/checkpoints"
+    local ffpp_dir="$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer"
+    local checkpoint_dir="$ffpp_dir/checkpoints"
     
     # Check if FlowFormerPlusPlusServer exists
-    if [ ! -d "$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer" ]; then
+    if [ ! -d "$ffpp_dir" ]; then
         print_error "FlowFormerPlusPlusServer directory not found!"
         print_error "Please run submodule setup first: scripts/setup_submodules.sh update"
         return 1
     fi
     
-    # Create checkpoints directory
-    mkdir -p "$checkpoint_dir"
-    
-    # Check disk space (need ~1GB for all models)
-    if ! check_disk_space 1200 "$checkpoint_dir"; then
+    # Check if the FlowFormer++ download script exists
+    local download_script="$ffpp_dir/scripts/download_ckpts.sh"
+    if [ ! -f "$download_script" ]; then
+        print_error "FlowFormer++ download script not found: $download_script"
+        print_error "The FlowFormerPlusPlusServer submodule may not be properly initialized"
         return 1
     fi
     
-    local downloaded_count=0
-    local skipped_count=0
-    local failed_count=0
+    # Make sure the script is executable
+    chmod +x "$download_script"
     
-    # Download specific model or all models
-    if [ "$model_name" == "all" ]; then
-        print_info "Downloading all FlowFormer++ models..."
-        for model in "${!FLOWFORMER_MODELS[@]}"; do
-            download_single_model "$model" "$checkpoint_dir" "$force_download"
-            case $? in
-                0) ((downloaded_count++)) ;;
-                2) ((skipped_count++)) ;;
-                *) ((failed_count++)) ;;
-            esac
-        done
-    else
-        # Check if specific model exists in configuration
-        if [ -z "${FLOWFORMER_MODELS[$model_name]}" ]; then
-            print_error "Unknown model: $model_name"
-            print_info "Available models:"
-            for model in "${!FLOWFORMER_MODELS[@]}"; do
-                echo "  - $model: ${MODEL_DESCRIPTIONS[$model]}"
-            done
-            return 1
-        fi
-        
-        download_single_model "$model_name" "$checkpoint_dir" "$force_download"
-        case $? in
-            0) ((downloaded_count++)) ;;
-            2) ((skipped_count++)) ;;
-            *) ((failed_count++)) ;;
-        esac
+    # Check disk space (need ~2GB for all models)
+    if ! check_disk_space 2048 "$ffpp_dir"; then
+        return 1
     fi
     
-    # Summary
-    print_step "Download Summary:"
-    print_info "Downloaded: $downloaded_count"
-    print_info "Skipped (already exists): $skipped_count"
-    [ "$failed_count" -gt 0 ] && print_warning "Failed: $failed_count"
+    # Save current directory and change to FlowFormer++ directory
+    local original_dir=$(pwd)
+    cd "$ffpp_dir" || {
+        print_error "Failed to change to FlowFormer++ directory"
+        return 1
+    }
     
-    if [ "$failed_count" -eq 0 ]; then
-        print_success "Model download completed successfully!"
+    print_progress "Running FlowFormer++ checkpoint download script..."
+    print_info "This will download models from Google Drive using gdown"
+    
+    # Run the FlowFormer++ download script
+    if ./scripts/download_ckpts.sh; then
+        print_success "FlowFormer++ checkpoints downloaded successfully!"
+        
+        # Verify critical checkpoint files exist
+        local expected_checkpoints=("sintel.pth" "things.pth" "kitti.pth" "chairs.pth")
+        local missing_checkpoints=()
+        
+        for checkpoint in "${expected_checkpoints[@]}"; do
+            if [ ! -f "checkpoints/$checkpoint" ]; then
+                missing_checkpoints+=("$checkpoint")
+            fi
+        done
+        
+        if [ ${#missing_checkpoints[@]} -gt 0 ]; then
+            print_warning "Some checkpoint files are missing: ${missing_checkpoints[*]}"
+            print_info "This may cause issues when running examples"
+            cd "$original_dir"
+            return 1
+        else
+            print_success "All required checkpoint files verified!"
+            cd "$original_dir"
+            return 0
+        fi
     else
-        print_warning "Some models failed to download. Check the errors above."
+        print_error "Failed to download FlowFormer++ checkpoints"
+        print_info "This will prevent the examples from running properly"
+        print_info "You can try downloading them manually later by running:"
+        print_info "  cd ThirdParty/FlowFormerPlusPlusServer && ./scripts/download_ckpts.sh"
+        print_warning "Setup will continue, but examples may fail without model files"
+        cd "$original_dir"
         return 1
     fi
 }
 
-# Helper function to download a single model
-download_single_model() {
-    local model_name=$1
-    local checkpoint_dir=$2
-    local force_download=${3:-false}
-    
-    local model_url="${FLOWFORMER_MODELS[$model_name]}"
-    local model_path="$checkpoint_dir/$model_name"
-    local model_description="${MODEL_DESCRIPTIONS[$model_name]}"
-    local model_size="${MODEL_SIZES[$model_name]}"
-    
-    print_progress "Processing model: $model_name ($model_size)"
-    print_info "Description: $model_description"
-    
-    # Check if model already exists
-    if [ -f "$model_path" ] && [ "$force_download" = false ]; then
-        if verify_file "$model_path" 100000000; then  # 100MB minimum for model files
-            print_success "Model already exists and verified: $model_name"
-            return 2  # Skipped
-        else
-            print_warning "Existing model file appears corrupted, re-downloading..."
-            rm -f "$model_path"
-        fi
-    elif [ -f "$model_path" ] && [ "$force_download" = true ]; then
-        print_info "Force download requested, removing existing file..."
-        rm -f "$model_path"
-    fi
-    
-    # Download the model
-    if download_file "$model_url" "$model_path" "$model_name"; then
-        if verify_file "$model_path" 100000000; then
-            return 0  # Success
-        else
-            rm -f "$model_path"  # Remove corrupted download
-            return 1  # Failed
-        fi
-    else
-        return 1  # Failed
-    fi
-}
+
 
 # Function to list available models
 list_models() {
     print_step "Available FlowFormer++ Models:"
     
-    for model in "${!FLOWFORMER_MODELS[@]}"; do
+    for model in "${!MODEL_DESCRIPTIONS[@]}"; do
         local status="Not downloaded"
         local model_path="$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer/checkpoints/$model"
         
         if [ -f "$model_path" ]; then
+            local file_size=$(stat -c%s "$model_path" 2>/dev/null || echo 0)
+            local size_mb=$((file_size / 1024 / 1024))
             if verify_file "$model_path" 100000000 >/dev/null 2>&1; then
-                status="${GREEN}Downloaded and verified${NC}"
+                status="${GREEN}Downloaded and verified (${size_mb}MB)${NC}"
             else
-                status="${YELLOW}Downloaded but may be corrupted${NC}"
+                status="${YELLOW}Downloaded but may be corrupted (${size_mb}MB)${NC}"
             fi
         else
             status="${RED}Not downloaded${NC}"
         fi
         
-        echo -e "  ${CYAN}$model${NC} (${MODEL_SIZES[$model]})"
+        echo -e "  ${CYAN}$model${NC}"
         echo -e "    Description: ${MODEL_DESCRIPTIONS[$model]}"
         echo -e "    Status: $status"
         echo
@@ -276,11 +235,21 @@ clean_models() {
     
     # Find model files
     local model_files=()
-    for model in "${!FLOWFORMER_MODELS[@]}"; do
+    for model in "${!MODEL_DESCRIPTIONS[@]}"; do
         if [ -f "$checkpoint_dir/$model" ]; then
             model_files+=("$checkpoint_dir/$model")
         fi
     done
+    
+    # Also look for other common checkpoint files
+    for file in "$checkpoint_dir"/*.pth; do
+        if [ -f "$file" ]; then
+            model_files+=("$file")
+        fi
+    done
+    
+    # Remove duplicates
+    model_files=($(printf "%s\n" "${model_files[@]}" | sort -u))
     
     if [ ${#model_files[@]} -eq 0 ]; then
         print_info "No model files found to clean"
@@ -322,17 +291,17 @@ check_model_status() {
     print_step "Model Status Check:"
     
     local checkpoint_dir="$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer/checkpoints"
-    local total_models=${#FLOWFORMER_MODELS[@]}
+    local total_models=${#MODEL_DESCRIPTIONS[@]}
     local downloaded_models=0
     local verified_models=0
     
-    for model in "${!FLOWFORMER_MODELS[@]}"; do
+    for model in "${!MODEL_DESCRIPTIONS[@]}"; do
         local model_path="$checkpoint_dir/$model"
         
         if [ -f "$model_path" ]; then
-            ((downloaded_models++))
+            downloaded_models=$((downloaded_models + 1))
             if verify_file "$model_path" 100000000 >/dev/null 2>&1; then
-                ((verified_models++))
+                verified_models=$((verified_models + 1))
             fi
         fi
     done
@@ -380,7 +349,7 @@ main() {
             print_banner "Model Verification"
             local checkpoint_dir="$PROJECT_ROOT/ThirdParty/FlowFormerPlusPlusServer/checkpoints"
             local exit_code=0
-            for model in "${!FLOWFORMER_MODELS[@]}"; do
+            for model in "${!MODEL_DESCRIPTIONS[@]}"; do
                 local model_path="$checkpoint_dir/$model"
                 if [ -f "$model_path" ]; then
                     if ! verify_file "$model_path" 100000000; then
