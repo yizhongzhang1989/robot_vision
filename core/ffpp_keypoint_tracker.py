@@ -7,9 +7,11 @@ High-performance keypoint tracking module using direct FlowFormer++ model integr
 This module provides the FFPPKeypointTracker class for efficient keypoint tracking
 with features including:
 - 21x faster tracking compared to API-based solutions
-- Simplified two-step interface (set_reference_image + track_keypoints)
+- Implements the standard KeypointTracker interface for consistency
+- Simplified three-method interface (set_reference_image + track_keypoints + remove_reference_image)
 - Bidirectional flow validation for accuracy assessment
 - Multiple reference image management
+- Raw optical flow data access with return_flow parameter
 - GPU acceleration with CUDA support
 
 Usage:
@@ -18,6 +20,7 @@ Usage:
     tracker = FFPPKeypointTracker()
     tracker.set_reference_image(ref_image, keypoints)
     result = tracker.track_keypoints(target_image)
+    tracker.remove_reference_image()  # Clean up when done
 
 For examples and test cases, see: examples/ffpp_keypoint_tracker_example.py
 """
@@ -30,6 +33,9 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, Union
 from PIL import Image
+
+# Import the base class
+from core.keypoint_tracker import KeypointTracker
 
 # Conditional imports to avoid issues when running as main
 try:
@@ -190,16 +196,16 @@ class ReferenceImageData:
         }
 
 
-class FFPPKeypointTracker:
+class FFPPKeypointTracker(KeypointTracker):
     """FlowFormer++ based keypoint tracker with direct model loading.
     
     This class provides keypoint tracking functionality by loading the FlowFormer++
     model directly, eliminating the need for a separate server. It uses the same
     model loading approach as the FlowFormerPlusPlusServer.
     
-    Public Interface:
+    Inherits from KeypointTracker base class and implements the standard interface:
     - set_reference_image(image, keypoints=None, image_name=None): Store reference image with keypoints
-    - track_keypoints(target_image, reference_name=None, bidirectional=False): Track keypoints from stored reference to target image
+    - track_keypoints(target_image, reference_name=None, bidirectional=False, return_flow=False): Track keypoints from stored reference to target image
     - remove_reference_image(image_name=None): Remove a stored reference image by name (None = default)
     """
     
@@ -216,7 +222,15 @@ class FFPPKeypointTracker:
             max_image_size: Maximum image size for processing. If None, uses config default.
             config: Configuration dictionary for processing parameters.
         """
-        # Get project paths
+        # Initialize base class
+        super().__init__(
+            model_path=model_path,
+            device=device,
+            max_image_size=max_image_size,
+            config=config
+        )
+        
+        # Get project paths (override base class paths with more complete version)
         try:
             self.paths = get_project_paths()
         except NameError:
@@ -227,6 +241,7 @@ class FFPPKeypointTracker:
                 'project_root': project_root,
                 'thirdparty': os.path.join(project_root, 'ThirdParty')
             }
+        
         self.config = self._load_config(config, max_image_size)
         
         # Model state
@@ -234,13 +249,8 @@ class FFPPKeypointTracker:
         self.device = None
         self.model_loaded = False
         
-        # Reference image state - support multiple reference images with keys
-        self.reference_data = {}  # Dict[str, ReferenceImageData] - key -> reference data
-        self.default_reference_key = None  # Key for default reference when None is passed
-        
-        # Processing state
+        # Processing state (reference_data is inherited from base class)
         self.last_flow = None
-        self.processing_stats = {}
         
         # Initialize model loading
         self._initialize_model(model_path, device)
