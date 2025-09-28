@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowFormer++ API Documentation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <style>
+        .endpoint { 
+            background: rgba(255, 255, 255, 0.95); 
+            padding: 20px; 
+            margin: 15px 0; 
+            border-radius: 8px; 
+            border-left: 4px solid #3498db;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .method { 
+            font-weight: bold; 
+            font-size: 1.1em;
+            margin-bottom: 10px;
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: inline-block;
+        }
+        .method.get { 
+            background: #27ae60; 
+            color: white; 
+        }
+        .method.post { 
+            background: #f39c12; 
+            color: white; 
+        }
+        .method.delete { 
+            background: #e74c3c; 
+            color: white; 
+        }
+        .tracker-compatible { 
+            border-left-color: #27ae60;
+            background: rgba(39, 174, 96, 0.05);
+        }
+        .code-block {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>📖 FlowFormer++ API Documentation</h1>
+            <p>Complete API reference for keypoint tracking service</p>
+            <div class="status-banner {{ 'status-ready' if service_status.status == 'ready' else 'status-error' }}">
+                <span>{{ '✅ Service Ready' if service_status.status == 'ready' else '❌ Service Error' }}</span>
+                {% if service_status.gpu_available %}
+                <span class="gpu-badge">GPU Accelerated</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Web Interface -->
+        <div class="interface-card">
+            <h2>🖥️ Web Interface</h2>
+            <div class="endpoint">
+                <div class="method get">GET /</div>
+                <p><strong>Interactive Dashboard</strong> - Full-featured keypoint tracking interface</p>
+                <p>Upload images, select keypoints interactively, and track with real-time visualization</p>
+            </div>
+        </div>
+
+        <!-- Service Endpoints -->
+        <div class="interface-card">
+            <h2>🔧 Service Endpoints</h2>
+            
+            <div class="endpoint">
+                <div class="method get">GET /status</div>
+                <p><strong>Service Status</strong> - Get current service status and configuration</p>
+                <div class="code-block">
+{
+  "service": "FlowFormer++ Keypoint Tracking Service",
+  "status": "ready",
+  "tracker_loaded": true,
+  "gpu_available": true,
+  "device": "cuda:0"
+}
+                </div>
+            </div>
+
+            <div class="endpoint">
+                <div class="method get">GET /health</div>
+                <p><strong>Health Check</strong> - Detailed service health information</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="method get">GET /references</div>
+                <p><strong>List References</strong> - Show all stored reference images</p>
+            </div>
+        </div>
+
+        <!-- Tracking Endpoints -->
+        <div class="interface-card">
+            <h2>🎯 Tracking Endpoints</h2>
+            
+            <div class="endpoint tracker-compatible">
+                <div class="method post">POST /track_keypoints</div>
+                <p><strong>Track Keypoints</strong> - Primary tracking endpoint (supports multiple formats)</p>
+                
+                <h4>Web Interface Format:</h4>
+                <div class="code-block">
+{
+  "ref_image": "base64_encoded_image_data",
+  "comp_image": "base64_encoded_image_data", 
+  "keypoints": [[x1, y1], [x2, y2], ...],
+  "enable_validation": false,
+  "visualize_paths": true,
+  "high_accuracy": false
+}
+                </div>
+
+                <h4>API Format (requires pre-set reference):</h4>
+                <div class="code-block">
+{
+  "image_base64": "base64_encoded_image_data",
+  "reference_name": "optional_ref_name",
+  "bidirectional": false,
+  "return_flow": false
+}
+                </div>
+            </div>
+
+            <div class="endpoint tracker-compatible">
+                <div class="method post">POST /set_reference_image</div>
+                <p><strong>Set Reference</strong> - Store reference image with optional keypoints</p>
+                <div class="code-block">
+{
+  "image_base64": "base64_encoded_image_data",
+  "keypoints": [{"x": 100, "y": 150}, ...],
+  "image_name": "optional_name"
+}
+                </div>
+            </div>
+
+            <div class="endpoint tracker-compatible">
+                <div class="method post">POST /remove_reference_image</div>
+                <div class="method delete">DELETE /remove_reference_image</div>
+                <p><strong>Remove Reference</strong> - Delete stored reference image</p>
+                <div class="code-block">
+// POST JSON Body:
+{"image_name": "reference_name"}
+
+// DELETE Query Parameter:
+?image_name=reference_name
+                </div>
+            </div>
+        </div>
+
+        <!-- Validation Endpoints -->
+        <div class="interface-card">
+            <h2>✅ Validation & Export</h2>
+            
+            <div class="endpoint">
+                <div class="method post">POST /validate_tracking</div>
+                <p><strong>Validate Results</strong> - Perform bidirectional validation on tracking results</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="method get">GET /export_results</div>
+                <p><strong>Export Results</strong> - Download tracking results as JSON file</p>
+            </div>
+
+            <div class="endpoint">
+                <div class="method get">GET /get_session_data</div>
+                <p><strong>Session Data</strong> - Retrieve current session keypoints and state</p>
+            </div>
+        </div>
+
+        <!-- Response Format -->
+        <div class="interface-card">
+            <h2>📄 Response Format</h2>
+            <p>All endpoints return responses in this standardized format:</p>
+            <div class="code-block">
+{
+  "success": true,
+  "message": "Operation completed successfully",
+  "result": {
+    "tracked_keypoints": [[x1, y1], [x2, y2], ...],
+    "processing_time": 1.23,
+    "flow_magnitude": 15.67
+  },
+  "error": null,
+  "timestamp": "2024-01-15 10:30:45"
+}
+            </div>
+        </div>
+
+        <!-- Error Codes -->
+        <div class="interface-card">
+            <h2>⚠️ Error Codes</h2>
+            <div class="endpoint">
+                <div class="method">400 Bad Request</div>
+                <p>Invalid input data or missing required fields</p>
+            </div>
+            <div class="endpoint">
+                <div class="method">503 Service Unavailable</div>
+                <p>Tracker not initialized or service degraded</p>
+            </div>
+            <div class="endpoint">
+                <div class="method">500 Internal Server Error</div>
+                <p>Processing error or unexpected failure</p>
+            </div>
+        </div>
+
+        <!-- Navigation -->
+        <div class="control-panel">
+            <h2>🚀 Quick Actions</h2>
+            <div class="control-actions">
+                <a href="/" class="btn btn-primary">📱 Open Dashboard</a>
+                <a href="/status" class="btn btn-info">📊 Check Status</a>
+                <a href="/health" class="btn btn-success">❤️ Health Check</a>
+                <a href="http://localhost:8000" class="btn btn-secondary">🏠 Control Center</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
