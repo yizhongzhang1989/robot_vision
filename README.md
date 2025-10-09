@@ -1,6 +1,10 @@
 # Robot Vision
 
-High-performance keypoint tracking for robotics applications with real-time web monitoring dashboard.
+High-performanc### Web API Client
+```python
+from core.ffpp_webapi_keypoint_tracker import FFPPWebAPIKeypointTracker
+
+tracker = FFPPKeypointTracker(api_url='http://localhost:8001')nt tracking for robotics applications with real-time web monitoring dashboard.
 
 ## 🚀 Quick Start
 
@@ -15,8 +19,8 @@ conda activate flowformerpp
 python start_services.py
 
 # Access the dashboard
-# Gateway: http://localhost:8001
-# FlowFormer++ Tracking: http://localhost:8002
+# Gateway: http://localhost:8000
+# FlowFormer++ Tracking: http://localhost:8001
 ```
 
 ### Python API
@@ -33,7 +37,7 @@ result = tracker.track_keypoints(target_image)
 from core.ffpp_webapi_keypoint_tracker import FFPPKeypointTracker
 
 # Connect to web service
-tracker = FFPPKeypointTracker(api_url='http://localhost:8002')
+tracker = FFPPKeypointTracker(api_url='http://localhost:8001')
 tracker.set_reference_image(ref_image, keypoints)
 result = tracker.track_keypoints(target_image)
 ```
@@ -65,11 +69,11 @@ robot_vision/
 │   └── utils.py                   # Utilities
 ├── web/                           # 🌐 Web services
 │   ├── ffpp_keypoint_tracking/    # Main tracking service
-│   │   ├── app.py                 # Flask server (port 8002)
+│   │   ├── app.py                 # Flask server (port 8001)
 │   │   ├── templates/dashboard.html  # Real-time dashboard
 │   │   └── static/                # CSS, JavaScript
-│   ├── gateway/                   # Control center (port 8001)
-│   └── image_labeling/            # Labeling tool (port 8003)
+│   ├── gateway/                   # Control center (port 8000)
+│   └── image_labeling/            # Labeling tool (port 8002)
 ├── examples/                      # 📚 Usage examples
 │   ├── ffpp_keypoint_tracker_example.py  # Local tracker demo
 │   ├── ffpp_webapi_keypoint_tracker_example.py  # Web API demo
@@ -141,9 +145,9 @@ conda activate flowformerpp
 python start_services.py
 
 # Services will start on configured ports (from config/services.yaml):
-# - Gateway (Control Center): http://localhost:8001
-# - FlowFormer++ Tracking: http://localhost:8002
-# - Image Labeling Tool: http://localhost:8003
+# - Gateway (Control Center): http://localhost:8000
+# - FlowFormer++ Tracking: http://localhost:8001
+# - Image Labeling Tool: http://localhost:8002
 ```
 
 ### Configuring Ports
@@ -151,20 +155,20 @@ python start_services.py
 Edit `config/services.yaml` to change ports:
 ```yaml
 gateway:
-  port: 8001
+  port: 8000
 
 services:
   ffpp_keypoint_tracking:
-    port: 8002
+    port: 8001
   image_labeling:
-    port: 8003
+    port: 8002
 ```
 
 Services automatically read configuration on startup - no code changes needed!
 
 ### Real-Time Dashboard
 
-Access the monitoring dashboard at `http://localhost:8002` after starting services.
+Access the monitoring dashboard at `http://localhost:8001` after starting services.
 
 **Features:**
 - 📊 Live API call monitoring with SSE (Server-Sent Events)
@@ -182,7 +186,7 @@ Access the monitoring dashboard at `http://localhost:8002` after starting servic
 from core.ffpp_webapi_keypoint_tracker import FFPPKeypointTracker
 
 # Initialize with service URL
-tracker = FFPPKeypointTracker(api_url='http://localhost:8002')
+tracker = FFPPKeypointTracker(api_url='http://localhost:8001')
 
 # Set reference image
 tracker.set_reference_image(ref_image, keypoints, image_name='reference_1')
@@ -203,12 +207,12 @@ visualization = result['visualization']  # Returns image
 
 **Health Check**
 ```bash
-curl http://localhost:8002/health
+curl http://localhost:8001/health
 ```
 
 **Set Reference Image**
 ```bash
-curl -X POST http://localhost:8002/set_reference \
+curl -X POST http://localhost:8001/set_reference \
   -H "Content-Type: application/json" \
   -d '{
     "image_base64": "data:image/jpeg;base64,...",
@@ -219,7 +223,7 @@ curl -X POST http://localhost:8002/set_reference \
 
 **Track Keypoints**
 ```bash
-curl -X POST http://localhost:8002/track_keypoints \
+curl -X POST http://localhost:8001/track_keypoints \
   -H "Content-Type: application/json" \
   -d '{
     "image_base64": "data:image/jpeg;base64,...",
@@ -232,13 +236,13 @@ curl -X POST http://localhost:8002/track_keypoints \
 **Dashboard (Real-time monitoring)**
 ```bash
 # Open in browser
-http://localhost:8002/
+http://localhost:8001/
 ```
 
 **API Events (SSE)**
 ```bash
 # Real-time event stream
-curl -N http://localhost:8002/api_events
+curl -N http://localhost:8001/api_events
 ```
 
 ## 💻 Local API Usage
@@ -305,20 +309,20 @@ references = tracker.list_references()
 
 ```yaml
 gateway:
-  port: 8001
+  port: 8000
   title: "Robot Vision Control Center"
 
 services:
   ffpp_keypoint_tracking:
     name: "FlowFormer++ Keypoint Tracking Service"
-    port: 8002
+    port: 8001
     type: "fastapi"
     path: "web/ffpp_keypoint_tracking"
     health_endpoint: "/health"
     
   image_labeling:
     name: "Image Labeling Tool"
-    port: 8003
+    port: 8002
     type: "static_web"
     path: "ThirdParty/ImageLabelingWeb"
 ```
@@ -385,58 +389,4 @@ services:
 - Bidirectional validation
 - Multiple reference management
 
-## API Server Usage
-
-### Start Server
-```bash
-python app.py  # Runs on http://0.0.0.0:8009
-```
-
-### API Endpoints
-
-**Health Check**
-```bash
-curl -X GET http://localhost:8009/health
-```
-
-**Set Reference Image**
-```bash
-curl -X POST http://localhost:8009/set_reference \
-  -F "image=@path/to/image.jpg" \
-  -F "keypoints=[{\"x\": 100, \"y\": 150}, {\"x\": 200, \"y\": 250}]" \
-  -F "image_name=ref1"
-```
-
-**Track Keypoints**
-```bash
-curl -X POST http://localhost:8009/track_keypoints \
-  -F "image=@path/to/target.jpg" \
-  -F "bidirectional=true"
-```
-
-**List References**
-```bash
-curl -X GET http://localhost:8009/references
-```
-
-### Python Client
-```python
-import requests
-base_url = 'http://localhost:8009'
-
-# Health check
-requests.get(f'{base_url}/health').json()
-
-# Set reference
-files = {'image': open('ref.jpg', 'rb')}
-data = {'keypoints': '[{"x": 100, "y": 150}]', 'image_name': 'ref1'}
-requests.post(f'{base_url}/set_reference', files=files, data=data).json()
-
-# Track keypoints
-files = {'image': open('target.jpg', 'rb')}
-data = {'bidirectional': 'true'}
-requests.post(f'{base_url}/track_keypoints', files=files, data=data).json()
-```
-
-### Interactive Documentation
-Visit `http://localhost:8009/docs` for full API documentation and testing interface.
+## 📄 License
