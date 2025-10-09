@@ -23,7 +23,7 @@ services:
   image_labeling:
     name: "Image Labeling Tool"  
     description: "Interactive image annotation and keypoint labeling web interface"
-    port: 8003
+    port: 8002
     type: "static_web"
     path: "ThirdParty/ImageLabelingWeb"
     launcher: "launch_server.py"

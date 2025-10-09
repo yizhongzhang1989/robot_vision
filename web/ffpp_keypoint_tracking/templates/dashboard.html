@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowFormer++ Real-Time Monitor</title>
+    <style>
+        /* Dashboard Optimized for 16:9 Big Screen Monitoring */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #ffffff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        /* Header Section */
+        .dashboard-header {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 20px 40px;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            align-items: center;
+            gap: 30px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-title h1 {
+            font-size: 2em;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .status-indicators {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .status-badge {
+            background: rgba(255, 255, 255, 0.15);
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .status-badge.active {
+            background: rgba(39, 174, 96, 0.3);
+            border-color: #27ae60;
+        }
+
+        .status-badge.error {
+            background: rgba(231, 76, 60, 0.3);
+            border-color: #e74c3c;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 25px;
+            font-size: 0.9em;
+        }
+
+        .stat-item {
+            text-align: right;
+        }
+
+        .stat-label {
+            display: block;
+            opacity: 0.7;
+            font-size: 0.85em;
+            margin-bottom: 3px;
+        }
+
+        .stat-value {
+            display: block;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        /* Main Content Area */
+        .dashboard-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            overflow: hidden;
+        }
+
+        /* Image Display Panels */
+        .image-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            position: relative;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .panel-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .panel-info {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+
+        .image-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 10px;
+            position: relative;
+            overflow: hidden;
+            min-height: 400px;
+        }
+
+        .dashboard-image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            border-radius: 8px;
+            display: block;
+        }
+
+        .keypoints-overlay {
+            position: absolute;
+            pointer-events: none;
+            /* Position and size will be set by JavaScript to match image */
+        }
+
+        .keypoint-marker {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            border: 2px solid white;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+        }
+
+        .keypoint-marker.original {
+            background: #ff6b6b;
+            animation: pulse 2s infinite;
+        }
+
+        .keypoint-marker.tracked {
+            background: #51cf66;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: translate(-50%, -50%) scale(0.08); }
+            50% { transform: translate(-50%, -50%) scale(1.3); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            opacity: 0.6;
+        }
+
+        .empty-state-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .empty-state h3 {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            font-size: 1em;
+            opacity: 0.8;
+        }
+
+        /* Metadata Panel */
+        .metadata-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 15px;
+            padding: 25px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            grid-column: 1 / -1;
+            margin-top: 20px;
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .metadata-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 15px 20px;
+            border-radius: 10px;
+            border-left: 4px solid #3498db;
+        }
+
+        .metadata-item.highlight {
+            border-left-color: #f39c12;
+            background: rgba(243, 156, 18, 0.2);
+        }
+
+        .metadata-item.success {
+            border-left-color: #27ae60;
+            background: rgba(39, 174, 96, 0.2);
+        }
+
+        .metadata-item.error {
+            border-left-color: #e74c3c;
+            background: rgba(231, 76, 60, 0.2);
+        }
+
+        .metadata-label {
+            display: block;
+            font-size: 0.85em;
+            opacity: 0.8;
+            margin-bottom: 5px;
+        }
+
+        .metadata-value {
+            display: block;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+
+        /* Connection Indicator */
+        .connection-indicator {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(39, 174, 96, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            font-size: 0.9em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+        }
+
+        .connection-indicator.disconnected {
+            background: rgba(231, 76, 60, 0.9);
+        }
+
+        .connection-indicator.reconnecting {
+            background: rgba(243, 156, 18, 0.9);
+        }
+
+        .pulse-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: white;
+            animation: pulse-dot 1.5s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* New Call Animation */
+        .new-call-flash {
+            animation: flash-border 1s ease-out;
+        }
+
+        @keyframes flash-border {
+            0%, 100% { border-color: rgba(255, 255, 255, 0.2); }
+            50% { border-color: #f39c12; box-shadow: 0 0 30px rgba(243, 156, 18, 0.5); }
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            text-align: center;
+        }
+
+        .spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive for different 16:9 resolutions */
+        @media (max-height: 800px) {
+            .dashboard-header { padding: 15px 30px; }
+            .header-title h1 { font-size: 1.5em; }
+            .image-container { min-height: 300px; }
+        }
+
+        @media (min-height: 1080px) {
+            .dashboard-header { padding: 30px 50px; }
+            .header-title h1 { font-size: 2.5em; }
+            .image-container { min-height: 500px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <div class="dashboard-header">
+            <div class="header-title">
+                <h1>🎯 FlowFormer++ Monitor</h1>
+            </div>
+            
+            <div class="status-indicators">
+                <div class="status-badge {{ 'active' if tracker_initialized else 'error' }}" id="tracker-status">
+                    <span>{{ '✅ Tracker Ready' if tracker_initialized else '❌ Tracker Error' }}</span>
+                </div>
+                <div class="status-badge active" id="realtime-status">
+                    <div class="pulse-dot"></div>
+                    <span>Real-time Monitoring</span>
+                </div>
+            </div>
+            
+            <div class="header-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Total Calls</span>
+                    <span class="stat-value" id="total-calls">{{ total_api_calls }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Last Update</span>
+                    <span class="stat-value" id="last-update">{{ recent_api_calls[0].timestamp if recent_api_calls else 'Waiting...' }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="dashboard-content" id="dashboard-content">
+            {% if recent_api_calls and recent_api_calls|length > 0 %}
+            {% set call = recent_api_calls[0] %}
+            
+            <!-- Reference Image Panel -->
+            <div class="image-panel" id="ref-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        📷 Reference Image
+                    </div>
+                    <div class="panel-info">
+                        {{ call.keypoints_count or 0 }} keypoints
+                    </div>
+                </div>
+                <div class="image-container">
+                    {% if call.ref_image_url %}
+                    <img src="{{ call.ref_image_url }}" alt="Reference Image" id="ref-image">
+                    <div class="keypoints-overlay" id="ref-keypoints-overlay">
+                        {% if call.original_keypoints %}
+                        {% for kp in call.original_keypoints %}
+                        <div class="keypoint-marker original" style="left: {{ kp.x if kp.x is defined else kp[0] }}px; top: {{ kp.y if kp.y is defined else kp[1] }}px;"></div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <span class="empty-state-icon">📷</span>
+                        <h3>No Reference Image</h3>
+                        <p>Waiting for API call...</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Target Image Panel -->
+            <div class="image-panel" id="target-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        🔍 Tracked Result
+                    </div>
+                    <div class="panel-info">
+                        {{ call.tracked_points or 0 }} tracked
+                    </div>
+                </div>
+                <div class="image-container">
+                    {% if call.target_image_url %}
+                    <img src="{{ call.target_image_url }}" alt="Target Image" id="target-image">
+                    <div class="keypoints-overlay" id="target-keypoints-overlay">
+                        {% if call.tracked_keypoints %}
+                        {% for kp in call.tracked_keypoints %}
+                        <div class="keypoint-marker tracked" style="left: {{ kp.x if kp.x is defined else kp[0] }}px; top: {{ kp.y if kp.y is defined else kp[1] }}px;"></div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
+                    {% else %}
+                    <div class="empty-state">
+                        <span class="empty-state-icon">🔍</span>
+                        <h3>No Tracking Result</h3>
+                        <p>Waiting for API call...</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Metadata Panel -->
+            <div class="metadata-panel">
+                <div class="metadata-grid">
+                    <div class="metadata-item {{ 'success' if call.success else 'error' }}">
+                        <span class="metadata-label">Status</span>
+                        <span class="metadata-value">{{ '✅ Success' if call.success else '❌ Failed' }}</span>
+                    </div>
+                    <div class="metadata-item highlight">
+                        <span class="metadata-label">Processing Time</span>
+                        <span class="metadata-value">{{ call.processing_time }}s</span>
+                    </div>
+                    <div class="metadata-item">
+                        <span class="metadata-label">Endpoint</span>
+                        <span class="metadata-value" style="font-size: 1.2em;">{{ call.endpoint }}</span>
+                    </div>
+                    <div class="metadata-item">
+                        <span class="metadata-label">Input Keypoints</span>
+                        <span class="metadata-value">{{ call.keypoints_count or 0 }}</span>
+                    </div>
+                    <div class="metadata-item highlight">
+                        <span class="metadata-label">Tracked Points</span>
+                        <span class="metadata-value">{{ call.tracked_points or 0 }}</span>
+                    </div>
+                    <div class="metadata-item">
+                        <span class="metadata-label">Timestamp</span>
+                        <span class="metadata-value" style="font-size: 1em;">{{ call.timestamp }}</span>
+                    </div>
+                </div>
+            </div>
+            
+            {% else %}
+            <!-- Empty State - No API Calls Yet -->
+            <div class="image-panel" style="grid-column: 1 / -1;">
+                <div class="empty-state" style="padding: 100px 20px;">
+                    <span class="empty-state-icon">🎯</span>
+                    <h3 style="font-size: 2em; margin-bottom: 20px;">Dashboard Ready</h3>
+                    <p style="font-size: 1.2em;">Monitoring FlowFormer++ Keypoint Tracking API</p>
+                    <p style="font-size: 1em; margin-top: 20px; opacity: 0.7;">Real-time results will appear here automatically</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Connection Indicator -->
+    <div class="connection-indicator" id="connection-indicator">
+        <div class="pulse-dot"></div>
+        <span id="connection-text">Real-time Connected</span>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <p style="font-size: 1.2em; color: white;">Loading...</p>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>

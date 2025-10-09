@@ -280,7 +280,7 @@ def test_basic_tracking():
     if not ref_result['success']:
         print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
         return False
-    
+
     print(f"✅ Reference image set with {ref_result['keypoints_count']} keypoints")
     print(f"   API call time: {ref_elapsed_time:.3f}s")
     print(f"   Reference key: {ref_result.get('key', 'Unknown')}")

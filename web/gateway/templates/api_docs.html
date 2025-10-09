@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Vision Gateway API - Documentation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+    <style>
+        .api-doc {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .endpoint {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 15px 0;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .method {
+            font-weight: bold;
+            color: #007bff;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 1.1em;
+        }
+        
+        .method.get { color: #28a745; }
+        .method.post { color: #007bff; }
+        .method.put { color: #ffc107; }
+        .method.delete { color: #dc3545; }
+        
+        .endpoint-description {
+            margin: 10px 0;
+            line-height: 1.6;
+        }
+        
+        .response-example {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.9em;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        
+        .nav-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="api-doc">
+            <div class="nav-header">
+                <h1>📖 Robot Vision Gateway API</h1>
+                <a href="/" class="btn btn-primary">← Back to Dashboard</a>
+            </div>
+            
+            <p>REST API documentation for the Robot Vision Gateway service.</p>
+            
+            <h2>Base URL</h2>
+            <p><code>{{ base_url }}</code></p>
+            
+            <h2>Endpoints</h2>
+            
+            <div class="endpoint">
+                <div class="method get">GET /</div>
+                <div class="endpoint-description">
+                    <strong>Main Dashboard</strong><br>
+                    Returns the main control interface with service overview and management controls.
+                </div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method get">GET /health</div>
+                <div class="endpoint-description">
+                    <strong>Gateway Health Check</strong><br>
+                    Returns the health status of the gateway service itself.
+                </div>
+                <div class="response-example">
+{
+  "success": true,
+  "message": "Robot Vision Gateway is running",
+  "data": {
+    "service": "Robot Vision Gateway",
+    "version": "2.0.0",
+    "port": 8000,
+    "services_configured": 2
+  },
+  "timestamp": "2025-09-28 22:00:00"
+}</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method get">GET /services/status</div>
+                <div class="endpoint-description">
+                    <strong>Service Status Check</strong><br>
+                    Returns the current health status of all configured services with response times and error information.
+                </div>
+                <div class="response-example">
+{
+  "success": true,
+  "message": "Status check completed for 2 services",
+  "data": {
+    "services": [
+      {
+        "name": "FlowFormer++ Keypoint Tracking Service",
+        "port": 8001,
+        "status": "healthy",
+        "health_url": "http://localhost:8001/health",
+        "docs_url": "http://msraig-ubuntu-2:8001/docs",
+        "last_checked": "2025-09-28 22:00:00",
+        "response_time": 45.2
+      }
+    ],
+    "summary": {
+      "total_services": 2,
+      "healthy_services": 1,
+      "unhealthy_services": 1
+    }
+  }
+}</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method get">GET /services/list</div>
+                <div class="endpoint-description">
+                    <strong>List All Services</strong><br>
+                    Returns configuration information for all available services including URLs and types.
+                </div>
+                <div class="response-example">
+{
+  "success": true,
+  "message": "Found 2 configured services",
+  "data": {
+    "services": [
+      {
+        "name": "FlowFormer++ Keypoint Tracking Service",
+        "description": "FlowFormer++ based keypoint tracking",
+        "port": 8001,
+        "type": "fastapi",
+        "service_url": "http://msraig-ubuntu-2:8001",
+        "health_url": "http://localhost:8001/health",
+        "docs_url": "http://msraig-ubuntu-2:8001/docs"
+      }
+    ]
+  }
+}</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method get">GET /network/info</div>
+                <div class="endpoint-description">
+                    <strong>Network Configuration Info</strong><br>
+                    Returns network configuration including hostname, available interfaces, and dynamic address resolution details.
+                </div>
+                <div class="response-example">
+{
+  "success": true,
+  "message": "Network configuration information",
+  "data": {
+    "hostname": "msraig-ubuntu-2",
+    "interfaces": {
+      "enp69s0": "10.172.151.12",
+      "docker0": "172.17.0.1"
+    },
+    "default_address": "msraig-ubuntu-2",
+    "current_request_host": "msraig-ubuntu-2:8000",
+    "dynamic_address": "msraig-ubuntu-2"
+  }
+}</div>
+            </div>
+            
+            <div class="endpoint">
+                <div class="method get">GET /docs</div>
+                <div class="endpoint-description">
+                    <strong>API Documentation</strong><br>
+                    Returns this API documentation page.
+                </div>
+            </div>
+            
+            <h2>Response Format</h2>
+            <p>All API responses follow a consistent format:</p>
+            <div class="response-example">
+{
+  "success": boolean,      // Indicates if the request was successful
+  "message": "string",     // Human-readable status message
+  "data": object|null,     // Response data (null if error)
+  "timestamp": "string"    // ISO timestamp of response
+}</div>
+            
+            <h2>Status Codes</h2>
+            <ul>
+                <li><strong>200 OK</strong> - Successful request</li>
+                <li><strong>404 Not Found</strong> - Endpoint not found</li>
+                <li><strong>500 Internal Server Error</strong> - Server error</li>
+            </ul>
+            
+            <h2>Smart Address Resolution</h2>
+            <p>The gateway automatically adjusts service URLs based on how you access it:</p>
+            <ul>
+                <li><strong>Hostname access</strong>: <code>http://msraig-ubuntu-2:8000</code> → Service links use hostname</li>
+                <li><strong>IP access</strong>: <code>http://10.172.151.12:8000</code> → Service links use IP</li>
+            </ul>
+            
+            <h2>Usage Examples</h2>
+            <div class="response-example">
+# Check gateway health
+curl http://{{ hostname }}:8000/health
+
+# Get all service status
+curl http://{{ hostname }}:8000/services/status
+
+# List configured services  
+curl http://{{ hostname }}:8000/services/list
+
+# Get network information
+curl http://{{ hostname }}:8000/network/info</div>
+        </div>
+        
+        <footer class="footer">
+            <p>&copy; 2025 Robot Vision Gateway API Documentation</p>
+        </footer>
+    </div>
+</body>
+</html>
