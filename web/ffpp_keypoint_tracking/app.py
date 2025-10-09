@@ -65,6 +65,10 @@ tracker_initialized = False
 api_call_log = deque(maxlen=50)  # Keep last 50 API calls
 total_api_calls_count = 0  # Track actual total number of API calls (not limited)
 
+# Asynchronous logging system
+logging_queue = queue.Queue(maxsize=100)  # Queue for async logging
+logging_thread = None  # Background logging thread
+
 # SSE event broadcasting system
 sse_clients = set()
 sse_queue = queue.Queue()
@@ -105,8 +109,38 @@ def broadcast_sse_event(event_type: str, data: dict):
     # Clean up disconnected clients
     sse_clients -= disconnected_clients
 
+def async_logging_worker():
+    """Background worker thread that processes logging queue asynchronously."""
+    logger.info("🔄 Async logging worker started")
+    while True:
+        try:
+            # Get logging task from queue (blocking)
+            task = logging_queue.get()
+            
+            if task is None:  # Shutdown signal
+                logger.info("🛑 Async logging worker stopping")
+                break
+            
+            # Process the logging task
+            endpoint, method, data, result, processing_time = task
+            process_api_call_log(endpoint, method, data, result, processing_time)
+            
+            logging_queue.task_done()
+        except Exception as e:
+            logger.error(f"Error in async logging worker: {e}")
+            logger.error(traceback.format_exc())
+
 def log_api_call(endpoint: str, method: str, data: dict, result: dict, processing_time: float):
-    """Log API call for dashboard display with full image and metadata storage."""
+    """Queue API call for asynchronous logging (non-blocking)."""
+    try:
+        # Put logging task in queue without blocking (use put_nowait)
+        logging_queue.put_nowait((endpoint, method, data, result, processing_time))
+    except queue.Full:
+        # If queue is full, log a warning but don't block the response
+        logger.warning(f"Logging queue full, skipping log for {endpoint}")
+
+def process_api_call_log(endpoint: str, method: str, data: dict, result: dict, processing_time: float):
+    """Process API call logging with full image and metadata storage (runs in background thread)."""
     global total_api_calls_count
     
     total_api_calls_count += 1  # Increment the actual total count
@@ -1071,8 +1105,17 @@ def demo_api_call():
     return jsonify(result)
 
 def startup_service():
-    """Initialize the tracker when the app starts."""
+    """Initialize the tracker and background logging worker when the app starts."""
+    global logging_thread
+    
     logger.info("🚀 Starting FlowFormer++ Keypoint Tracking Service...")
+    
+    # Start async logging worker thread
+    logging_thread = threading.Thread(target=async_logging_worker, daemon=True, name="AsyncLoggingWorker")
+    logging_thread.start()
+    logger.info("✅ Async logging worker started")
+    
+    # Initialize tracker
     if TRACKER_AVAILABLE:
         success = initialize_tracker()
         if success:
@@ -1082,19 +1125,37 @@ def startup_service():
     else:
         logger.warning("⚠️ Tracker not available due to import issues.")
 
+def shutdown_service():
+    """Clean shutdown of background services."""
+    global logging_thread
+    
+    logger.info("🛑 Shutting down services...")
+    
+    # Stop async logging worker
+    if logging_thread and logging_thread.is_alive():
+        logging_queue.put(None)  # Send shutdown signal
+        logging_thread.join(timeout=5)
+        logger.info("✅ Async logging worker stopped")
+    
+    logger.info("👋 Service shutdown complete")
+
 if __name__ == "__main__":
     print("🎯 Starting FlowFormer++ Keypoint Tracking Service")
     print("📋 Features:")
     print("   - ✅ FlowFormer++ keypoint tracking")
-    print("   - 🚀 GPU acceleration")  
+    print("   - 🚀 GPU acceleration")
+    print("   - ⚡ Async logging (non-blocking API responses)")
     print("   - 🔧 Part of Robot Vision Services")
     print(f"🌐 Access at: http://localhost:{SERVICE_PORT}")
     print("📖 Flask routes: /health, /references, /set_reference, /track_keypoints")
     
     startup_service()
     
-    app.run(
-        host="0.0.0.0",
-        port=SERVICE_PORT,
-        debug=False
-    )
+    try:
+        app.run(
+            host="0.0.0.0",
+            port=SERVICE_PORT,
+            debug=False
+        )
+    except KeyboardInterrupt:
+        shutdown_service()
