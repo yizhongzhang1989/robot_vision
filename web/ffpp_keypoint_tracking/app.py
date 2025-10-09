@@ -14,13 +14,11 @@ import time
 import logging
 import traceback
 import base64
-import shutil
-import uuid
 import yaml
 from datetime import datetime
 from collections import deque
 from typing import Dict, List, Optional
-from flask import Flask, request, jsonify, render_template, send_from_directory, Response, stream_template
+from flask import Flask, request, jsonify, render_template, send_from_directory, Response
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
@@ -377,7 +375,7 @@ def get_service_status() -> Dict:
         "status": "ready" if tracker_initialized else "error",
         "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
         "version": "2.0.0",
-        "port": 8001,
+        "port": SERVICE_PORT,
         "tracker_loaded": tracker_initialized,
         "gpu_available": False,
         "device": "unknown"
@@ -439,16 +437,6 @@ def dashboard():
 def status_endpoint():
     """Get service status for AJAX requests."""
     return jsonify(get_service_status())
-
-@app.route("/get_session_data")
-def get_session_data():
-    """Get any existing session data for the frontend."""
-    # This could be expanded to maintain session state
-    return jsonify(create_api_response(
-        success=True,
-        message="No session data available",
-        result={"keypoints": []}
-    ))
 
 @app.route("/api_logs")
 def get_api_logs():
@@ -515,46 +503,6 @@ def api_events():
         }
     )
 
-@app.route("/validate_tracking", methods=["POST"])
-def validate_tracking():
-    """Validate tracking results with reverse flow."""
-    if not tracker_initialized:
-        return jsonify(create_api_response(
-            success=False,
-            message="Tracker not initialized"
-        )), 503
-    
-    # This would implement bidirectional validation
-    # For now, return a placeholder response
-    return jsonify(create_api_response(
-        success=True,
-        message="Validation completed",
-        result={
-            "reverse_flow_keypoints": [],
-            "validation_errors": [],
-            "average_error": 0.0,
-            "validation_visualization_path": "/static/images/validation_placeholder.png"
-        }
-    ))
-
-@app.route("/export_results")
-def export_results():
-    """Export tracking results as JSON file."""
-    # This would export the current tracking session results
-    # For now, return a placeholder
-    results = {
-        "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
-        "service": "FlowFormer++ Keypoint Tracking",
-        "results": "No results available"
-    }
-    
-    from flask import Response
-    return Response(
-        json.dumps(results, indent=2),
-        mimetype='application/json',
-        headers={"Content-disposition": "attachment; filename=tracking_results.json"}
-    )
-
 @app.route("/health")
 def health_check():
     """Health check endpoint."""
@@ -567,7 +515,7 @@ def health_check():
         "status": "healthy" if tracker_initialized else "degraded",
         "timestamp": time.strftime('%Y-%m-%d %H:%M:%S'),
         "version": "2.0.0",
-        "port": 8001,
+        "port": SERVICE_PORT,
         "tracker_loaded": tracker_initialized,
         "gpu_available": tracker.device.type == 'cuda' if tracker_initialized and tracker.device else False,
         "device": str(tracker.device) if tracker_initialized and tracker.device else "unknown"
@@ -808,7 +756,6 @@ def track_keypoints_web_format(data, start_time):
                 "tracked_keypoints": track_result.get('tracked_keypoints', []),
                 "processing_time": track_result.get('processing_time', 0),
                 "flow_magnitude": track_result.get('flow_magnitude', 0),
-                "visualization_path": "/static/images/tracking_visualization.png",  # Placeholder
                 "success": True
             }
             
