@@ -5,14 +5,23 @@ class APICallMonitor {
         this.refreshInterval = null;
         this.eventSource = null;
         this.isRealTimeEnabled = true;
+        this.currentPage = 1;
+        this.totalCalls = 0;
+        this.displayedCalls = 1; // Show only the most recent result
+        this.callsPerPage = 10;
         this.init();
     }
 
     init() {
+        // Reset state on page load to ensure fresh start
+        this.currentPage = 1;
+        this.displayedCalls = 1; // Show only most recent
+        
         this.setupEventListeners();
         this.checkServiceStatus();
-        this.connectRealTime(); // Start real-time connection
-        console.log('API Call Monitor initialized with real-time updates');
+        this.refreshAPILogs(); // Load initial data first
+        this.connectRealTime(); // Then start real-time connection
+        console.log('API Call Monitor initialized with real-time updates (showing most recent call only)');
     }
 
     setupEventListeners() {
@@ -29,12 +38,23 @@ class APICallMonitor {
         const refreshApiBtn = document.getElementById('refresh-api-logs');
         if (refreshApiBtn) {
             refreshApiBtn.addEventListener('click', () => {
+                // Reset to showing only most recent item
+                this.currentPage = 1;
+                this.displayedCalls = 1;
                 this.refreshAPILogs();
-                this.showNotification('Refreshing API logs...', 'info');
+                this.showNotification('Refreshing to show most recent API call...', 'info');
             });
         }
 
-        // Real-time toggle (replaces auto-refresh)
+        // Load More button
+        const loadMoreBtn = document.getElementById('load-more-btn');
+        if (loadMoreBtn) {
+            loadMoreBtn.addEventListener('click', () => {
+                this.loadMoreResults();
+            });
+        }
+
+        // Real-time toggle
         const realTimeToggle = document.getElementById('auto-refresh-toggle');
         if (realTimeToggle) {
             realTimeToggle.addEventListener('change', (e) => {
@@ -105,19 +125,34 @@ class APICallMonitor {
         
         switch (event.type) {
             case 'connected':
-                console.log(event.message);
+                console.log('✅ Real-time monitoring connected:', event.message);
                 break;
                 
             case 'initial_data':
-                this.updateAPILogsTable(event.data.logs);
+                this.totalCalls = event.data.total || 0;
+                // Only show the first 5 logs from initial data
+                const logsToShow = event.data.logs ? event.data.logs.slice(0, this.displayedCalls) : [];
+                this.updateAPILogsTable(logsToShow, false); // false = don't append
                 this.updateStats(event.data);
+                this.updateLoadMoreButton();
                 break;
                 
             case 'api_call_update':
-                // Add new API call to the top of the list
+                // New API call from ANY source (external API clients, web interface, etc.)
+                console.log('🆕 New API call detected:', event.data.new_call.endpoint);
+                this.totalCalls = event.data.total_calls;
                 this.addNewAPICall(event.data.new_call);
                 this.updateStats({total: event.data.total_calls, logs: [event.data.new_call]});
-                this.showNotification(`New ${event.data.new_call.endpoint} call completed!`, 'realtime');
+                this.updateLoadMoreButton();
+                
+                // Visual notification for real-time update
+                this.showNotification(
+                    `New ${event.data.new_call.endpoint} call from ${event.data.new_call.success ? 'succeeded ✅' : 'failed ❌'}`, 
+                    'realtime'
+                );
+                
+                // Flash the connection status to show activity
+                this.flashConnectionStatus();
                 break;
                 
             case 'keepalive':
@@ -129,9 +164,25 @@ class APICallMonitor {
         }
     }
 
+    flashConnectionStatus() {
+        const statusElement = document.getElementById('connection-status');
+        if (statusElement) {
+            statusElement.style.animation = 'pulse 0.5s ease-in-out';
+            setTimeout(() => {
+                statusElement.style.animation = '';
+            }, 500);
+        }
+    }
+
     addNewAPICall(newCall) {
         const feedContainer = document.getElementById('api-call-feed');
         if (!feedContainer) return;
+
+        // Remove "no calls" message if present
+        const noCallsMsg = feedContainer.querySelector('.no-api-calls-visual, .no-api-calls');
+        if (noCallsMsg) {
+            feedContainer.innerHTML = '';
+        }
 
         // Create the new call card
         const newCallElement = document.createElement('div');
@@ -142,24 +193,14 @@ class APICallMonitor {
         if (callCard) {
             callCard.classList.add('new-call-highlight');
             
-            // Insert at the top
-            if (feedContainer.firstChild) {
-                feedContainer.insertBefore(callCard, feedContainer.firstChild);
-            } else {
-                feedContainer.appendChild(callCard);
-            }
+            // Replace entire content with just the new call (show only most recent)
+            feedContainer.innerHTML = '';
+            feedContainer.appendChild(callCard);
             
             // Remove highlight after animation
             setTimeout(() => {
                 callCard.classList.remove('new-call-highlight');
             }, 3000);
-            
-            // Limit the number of displayed calls to prevent memory issues
-            const maxCalls = 20;
-            const allCalls = feedContainer.children;
-            while (allCalls.length > maxCalls) {
-                feedContainer.removeChild(allCalls[allCalls.length - 1]);
-            }
         }
     }
 
@@ -197,8 +238,8 @@ class APICallMonitor {
 
     async refreshAPILogs() {
         try {
-            console.log('Refreshing API logs...');
-            const response = await fetch('/api_logs?per_page=5');
+            console.log(`Refreshing API logs (page ${this.currentPage}, showing ${this.displayedCalls} calls)...`);
+            const response = await fetch(`/api_logs?per_page=${this.displayedCalls}`);
             
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -208,9 +249,11 @@ class APICallMonitor {
             console.log('API logs data received:', data);
             
             if (data.success && data.logs) {
-                this.updateAPILogsTable(data.logs);
+                this.totalCalls = data.total;
+                this.updateAPILogsTable(data.logs, false); // false = replace, not append
                 this.updateStats(data);
-                console.log(`Updated dashboard with ${data.logs.length} API calls`);
+                this.updateLoadMoreButton();
+                console.log(`Updated dashboard with ${data.logs.length} API calls (total: ${data.total})`);
             } else {
                 console.warn('No logs data in response:', data);
             }
@@ -220,17 +263,66 @@ class APICallMonitor {
         }
     }
 
-    updateAPILogsTable(logs) {
+    async loadMoreResults() {
+        const loadMoreBtn = document.getElementById('load-more-btn');
+        if (!loadMoreBtn) return;
+
+        try {
+            loadMoreBtn.disabled = true;
+            loadMoreBtn.textContent = '⏳ Loading...';
+            
+            // Increase displayed calls count
+            this.displayedCalls += this.callsPerPage;
+            
+            console.log(`Loading more results (now showing ${this.displayedCalls} calls)...`);
+            const response = await fetch(`/api_logs?per_page=${this.displayedCalls}`);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.success && data.logs) {
+                this.totalCalls = data.total;
+                this.updateAPILogsTable(data.logs, false); // Replace entire list with expanded view
+                this.updateStats(data);
+                this.updateLoadMoreButton();
+                this.showNotification(`Loaded ${data.logs.length} API calls`, 'success');
+            }
+            
+        } catch (error) {
+            console.error('Error loading more results:', error);
+            this.showNotification('Failed to load more results', 'error');
+        } finally {
+            loadMoreBtn.disabled = false;
+            loadMoreBtn.textContent = '📜 Load More Results';
+        }
+    }
+
+    updateLoadMoreButton() {
+        const loadMoreBtn = document.getElementById('load-more-btn');
+        if (!loadMoreBtn) return;
+
+        // Hide the load more button - we only show 1 result now
+        // Additional results will be shown in a separate page
+        loadMoreBtn.style.display = 'none';
+    }
+
+    updateAPILogsTable(logs, append = false) {
         const feedContainer = document.getElementById('api-call-feed');
         if (!feedContainer) return;
+
+        console.log(`🔄 Updating API logs table: ${logs.length} logs, append=${append}, displayedCalls=${this.displayedCalls}`);
 
         if (logs.length === 0) {
             feedContainer.innerHTML = `
                 <div class="no-api-calls-visual">
                     <div class="empty-state-visual">
                         <span class="empty-icon">🎯</span>
-                        <h3>No API Calls to Monitor</h3>
-                        <p>Start making API calls to see rich visual monitoring of FlowFormer++ computations</p>
+                        <h3>Dashboard Ready - Waiting for API Calls</h3>
+                        <p>This dashboard monitors all API requests to the FlowFormer++ service in real-time.</p>
+                        <p><strong>Make API calls from your application, and they will appear here instantly!</strong></p>
                         <div class="endpoint-examples-visual">
                             <div class="endpoint-example">
                                 <code>POST /set_reference_image</code>
@@ -241,13 +333,27 @@ class APICallMonitor {
                                 <span>Track keypoints across images</span>
                             </div>
                         </div>
+                        <p style="margin-top: 15px; color: #3498db; font-weight: bold;">
+                            🔴 LIVE: Connected and monitoring...
+                        </p>
                     </div>
                 </div>
             `;
             return;
         }
 
-        feedContainer.innerHTML = logs.map(call => this.createVisualCallCard(call)).join('');
+        if (append) {
+            // Append new calls (for pagination/load more)
+            const newContent = logs.map(call => this.createVisualCallCard(call)).join('');
+            feedContainer.insertAdjacentHTML('beforeend', newContent);
+        } else {
+            // Replace entire content (for refresh or initial load)
+            // Ensure we're creating fresh HTML
+            const htmlContent = logs.map(call => this.createVisualCallCard(call)).join('');
+            feedContainer.innerHTML = htmlContent;
+        }
+        
+        console.log(`📊 Dashboard updated: ${logs.length} API calls displayed (Total in system: ${this.totalCalls}, Container children: ${feedContainer.children.length})`);
     }
 
     createVisualCallCard(call) {

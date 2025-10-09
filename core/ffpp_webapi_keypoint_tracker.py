@@ -70,6 +70,7 @@ import json
 import base64
 import requests
 import numpy as np
+import cv2
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from PIL import Image
@@ -713,8 +714,9 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
         Format and quality are controlled by instance configuration.
         
         Args:
-            image: RGB image as numpy array (H, W, 3) in any numeric dtype.
+            image: BGR image as numpy array (H, W, 3) in any numeric dtype (OpenCV format).
                   Values are automatically normalized to uint8 range if needed.
+                  Automatically converts BGR to RGB for proper web display.
             
         Returns:
             str: Image data encoded as base64 string suitable for JSON transmission.
@@ -724,14 +726,21 @@ class FFPPWebAPIKeypointTracker(KeypointTracker):
             - PNG: Lossless compression, exact pixel preservation, slower transmission
             - JPG: Lossy compression, faster transmission, configurable quality
             Automatically converts float images to uint8 by scaling [0,1] → [0,255].
+            Automatically converts BGR (OpenCV format) to RGB for proper display.
             Base64 encoding allows binary data to be included in JSON payloads.
         """
         # Ensure image is in the correct format
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
         
+        # Convert BGR to RGB (OpenCV uses BGR, web/PIL expects RGB)
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            image_rgb = image  # Grayscale or already in correct format
+        
         # Convert to PIL Image
-        pil_image = Image.fromarray(image, 'RGB')
+        pil_image = Image.fromarray(image_rgb, 'RGB')
         
         # Save to bytes buffer with configured format
         img_bytes = io.BytesIO()

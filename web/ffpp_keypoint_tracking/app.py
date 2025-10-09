@@ -21,6 +21,7 @@ from collections import deque
 from typing import Dict, List, Optional
 from flask import Flask, request, jsonify, render_template, send_from_directory, Response, stream_template
 import numpy as np
+import cv2
 from PIL import Image, ImageDraw
 import io
 import queue
@@ -247,7 +248,7 @@ def save_image_and_get_url(image_data, call_id, image_type):
                 image_data.save(buffer, format='PNG')
                 image_bytes = buffer.getvalue()
             else:
-                # Numpy array
+                # Numpy array (should already be in RGB from client conversion)
                 pil_image = Image.fromarray(image_data)
                 buffer = io.BytesIO()
                 pil_image.save(buffer, format='PNG')
@@ -404,8 +405,8 @@ def dashboard():
     # Get service status for dashboard
     status_info = get_service_status()
     
-    # Get recent API calls (last 5 for main dashboard)
-    recent_calls = list(api_call_log)[:5]
+    # Get only the most recent API call for main dashboard
+    recent_calls = list(api_call_log)[:1]  # Only 1 most recent
     
     return render_template('dashboard.html', 
                          service_status=status_info,

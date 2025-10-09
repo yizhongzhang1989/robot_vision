@@ -1008,6 +1008,8 @@ body {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .api-call-visual:hover {
@@ -1091,6 +1093,13 @@ body {
     grid-template-columns: 2fr 1fr;
     gap: 25px;
     margin-bottom: 20px;
+}
+
+/* Responsive layout for smaller screens */
+@media (max-width: 1200px) {
+    .call-visual-content {
+        grid-template-columns: 1fr;
+    }
 }
 
 .images-section {
