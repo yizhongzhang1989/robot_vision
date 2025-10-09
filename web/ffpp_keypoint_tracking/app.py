@@ -16,6 +16,7 @@ import traceback
 import base64
 import shutil
 import uuid
+import yaml
 from datetime import datetime
 from collections import deque
 from typing import Dict, List, Optional
@@ -30,6 +31,21 @@ import threading
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, project_root)
+
+# Load service configuration
+def load_service_config():
+    """Load port and other settings from services.yaml"""
+    config_path = os.path.join(project_root, 'config', 'services.yaml')
+    try:
+        with open(config_path, 'r') as f:
+            config = yaml.safe_load(f)
+            return config.get('services', {}).get('ffpp_keypoint_tracking', {})
+    except Exception as e:
+        logger.warning(f"Could not load config from {config_path}: {e}")
+        return {}
+
+service_config = load_service_config()
+SERVICE_PORT = service_config.get('port', 8001)  # Default to 8001 if config not found
 
 # Import the real FlowFormer++ tracker
 try:
@@ -1125,13 +1141,13 @@ if __name__ == "__main__":
     print("   - ✅ FlowFormer++ keypoint tracking")
     print("   - 🚀 GPU acceleration")  
     print("   - 🔧 Part of Robot Vision Services")
-    print("🌐 Access at: http://localhost:8001")
+    print(f"🌐 Access at: http://localhost:{SERVICE_PORT}")
     print("📖 Flask routes: /health, /references, /set_reference, /track_keypoints")
     
     startup_service()
     
     app.run(
         host="0.0.0.0",
-        port=8001,
+        port=SERVICE_PORT,
         debug=False
     )

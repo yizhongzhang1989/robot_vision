@@ -154,6 +154,7 @@ def load_service_config():
         return None
 
 config = load_service_config()
+GATEWAY_PORT = config.get('gateway', {}).get('port', 8000) if config else 8000
 
 # Initialize Flask app with template and static folder configuration
 app = Flask(__name__, 
@@ -386,7 +387,7 @@ if __name__ == "__main__":
     print("   - 🎛️ Centralized control dashboard")
     print("   - 📊 Health status tracking")
     print("   - 🔧 Gateway API for service management")
-    print(f"🌐 Access at: http://localhost:8000 (local) or http://{SERVER_ADDRESS}:8000 (external)")
+    print(f"🌐 Access at: http://localhost:{GATEWAY_PORT} (local) or http://{SERVER_ADDRESS}:{GATEWAY_PORT} (external)")
     print("📖 Flask routes: /health, /services/status, /services/list")
     print(f"🔗 Service links will use address: {SERVER_ADDRESS}")
     print(f"🏠 Hostname: {HOSTNAME}")
@@ -412,6 +413,6 @@ if __name__ == "__main__":
     
     app.run(
         host="0.0.0.0",
-        port=8000,
+        port=GATEWAY_PORT,
         debug=False
     )
