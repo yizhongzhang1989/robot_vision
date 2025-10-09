@@ -1,10 +1,37 @@
 # Robot Vision
 
-High-performanc### Web API Client
-```python
-from core.ffpp_webapi_keypoint_tracker import FFPPWebAPIKeypointTracker
+A comprehensive robotics vision toolkit providing high-performance keypoint tracking and image annotation capabilities. This repository combines state-of-the-art optical flow techniques with practical tools for robot vision applications.
 
-tracker = FFPPKeypointTracker(api_url='http://localhost:8001')nt tracking for robotics applications with real-time web monitoring dashboard.
+## 📖 Overview
+
+**Robot Vision** is a production-ready computer vision system designed for robotics applications. It provides:
+
+- **🎯 High-Performance Keypoint Tracking**: FlowFormer++ based optical flow tracking with 21x speed improvement over API-based methods (~0.3s vs ~7s per image)
+- **🏷️ Interactive Image Labeling**: Web-based tool for annotating images and marking keypoints for training and reference data creation
+- **📊 Real-Time Monitoring Dashboard**: Live visualization with Server-Sent Events (SSE) for tracking performance and results
+- **🌐 Microservices Architecture**: Independent gateway, tracking, and labeling services with centralized control
+
+### Use Cases
+- Robot manipulation and grasping (tracking object keypoints)
+- Visual servoing and calibration
+- Object pose estimation
+- Dataset annotation and preparation
+- Real-time vision system monitoring
+
+## 💻 Requirements
+
+### Hardware Requirements
+- **GPU**: NVIDIA GPU with CUDA support (required for FlowFormer++)
+  - ✅ Tested on: RTX 3090, RTX 4090
+  - Minimum: 8GB VRAM recommended
+  - CUDA 11.3+ compatible GPU
+
+### Software Requirements
+- **OS**: Linux (Ubuntu 18.04+ recommended)
+- **Python**: 3.8+
+- **CUDA**: 11.3 or later
+- **Conda**: Anaconda or Miniconda
+- **Git**: With submodule support
 
 ## 🚀 Quick Start
 
