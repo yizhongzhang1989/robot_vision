@@ -49,6 +49,7 @@ tracker_initialized = False
 
 # API call logging system
 api_call_log = deque(maxlen=50)  # Keep last 50 API calls
+total_api_calls_count = 0  # Track actual total number of API calls (not limited)
 
 # SSE event broadcasting system
 sse_clients = set()
@@ -92,8 +93,12 @@ def broadcast_sse_event(event_type: str, data: dict):
 
 def log_api_call(endpoint: str, method: str, data: dict, result: dict, processing_time: float):
     """Log API call for dashboard display with full image and metadata storage."""
+    global total_api_calls_count
+    
+    total_api_calls_count += 1  # Increment the actual total count
+    
     call_record = {
-        'id': len(api_call_log) + 1,
+        'id': total_api_calls_count,  # Use the actual counter, not the deque length
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'endpoint': endpoint,
         'method': method,
@@ -195,7 +200,7 @@ def log_api_call(endpoint: str, method: str, data: dict, result: dict, processin
     # Broadcast real-time update to SSE clients
     broadcast_sse_event('api_call_update', {
         'new_call': call_record,
-        'total_calls': len(api_call_log)
+        'total_calls': total_api_calls_count  # Use actual counter, not deque length
     })
 
 def initialize_tracker():
@@ -412,7 +417,7 @@ def dashboard():
                          service_status=status_info,
                          tracker_initialized=tracker_initialized,
                          recent_api_calls=recent_calls,
-                         total_api_calls=len(api_call_log))
+                         total_api_calls=total_api_calls_count)  # Use actual counter
 
 @app.route("/status")
 def status_endpoint():
@@ -435,7 +440,7 @@ def get_api_logs():
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
     
-    # Paginate the logs
+    # Paginate the logs (note: only last 50 calls are stored in memory)
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     logs_page = list(api_call_log)[start_idx:end_idx]
@@ -443,7 +448,8 @@ def get_api_logs():
     return jsonify({
         'success': True,
         'logs': logs_page,
-        'total': len(api_call_log),
+        'total': total_api_calls_count,  # Actual total count
+        'available': len(api_call_log),  # Number of calls available in memory
         'page': page,
         'per_page': per_page,
         'has_more': end_idx < len(api_call_log)
@@ -464,7 +470,7 @@ def api_events():
             # Send current API logs on connection
             current_logs = list(api_call_log)[:5]  # Last 5 calls
             if current_logs:
-                yield f"data: {json.dumps({'type': 'initial_data', 'data': {'logs': current_logs, 'total': len(api_call_log)}})}\n\n"
+                yield f"data: {json.dumps({'type': 'initial_data', 'data': {'logs': current_logs, 'total': total_api_calls_count}})}\n\n"
             
             # Stream real-time events
             while client.active:
