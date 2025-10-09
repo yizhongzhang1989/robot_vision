@@ -70,8 +70,7 @@ logging_queue = queue.Queue(maxsize=100)  # Queue for async logging
 logging_thread = None  # Background logging thread
 
 # SSE event broadcasting system
-sse_clients = set()
-sse_queue = queue.Queue()
+sse_clients = set()  # Set of active SSE clients
 
 class SSEClient:
     def __init__(self):
@@ -133,8 +132,13 @@ def async_logging_worker():
 def log_api_call(endpoint: str, method: str, data: dict, result: dict, processing_time: float):
     """Queue API call for asynchronous logging (non-blocking)."""
     try:
+        # Make a shallow copy of data to avoid issues with dict modification after queuing
+        # Note: We keep the image_base64 string reference (not copied) for efficiency
+        data_copy = data.copy() if data else {}
+        result_copy = result.copy() if result else {}
+        
         # Put logging task in queue without blocking (use put_nowait)
-        logging_queue.put_nowait((endpoint, method, data, result, processing_time))
+        logging_queue.put_nowait((endpoint, method, data_copy, result_copy, processing_time))
     except queue.Full:
         # If queue is full, log a warning but don't block the response
         logger.warning(f"Logging queue full, skipping log for {endpoint}")
@@ -178,20 +182,26 @@ def process_api_call_log(endpoint: str, method: str, data: dict, result: dict, p
             try:
                 # Save image to disk and get URL
                 call_id = f"call_{call_record['id']}_{int(time.time())}"
+                
+                # Save the clean original image (dashboard will render keypoints with JavaScript)
                 img_url = save_image_and_get_url(data['image_base64'], call_id, 'ref')
                 call_record['ref_image_url'] = img_url
+                
+                # Don't set target_image_url for set_reference_image - it's not a tracking result
+                call_record['target_image_url'] = None
                 
                 # Estimate image size
                 img_bytes = data['image_base64'].split(',')[-1]
                 estimated_size = len(base64.b64decode(img_bytes)) // 1024  # KB
                 call_record['ref_image_size'] = f"{estimated_size}KB"
+                call_record['target_image_size'] = None
                 
                 # Store metadata
                 call_record['detailed_metadata'] = {
                     'image_name': data.get('image_name', 'unnamed'),
                     'image_format': 'png_file',
                     'keypoints_provided': len(data.get('keypoints', [])) > 0,
-                    'image_url': img_url
+                    'image_url': call_record['ref_image_url']
                 }
             except Exception as e:
                 logger.error(f"Failed to save reference image: {str(e)}")
@@ -287,10 +297,26 @@ os.makedirs(IMAGES_DIR, exist_ok=True)
 def save_image_and_get_url(image_data, call_id, image_type):
     """Save image to disk and return URL path"""
     try:
-        if isinstance(image_data, str) and image_data.startswith('data:image'):
-            # Handle base64 data URL
-            image_data = image_data.split(',')[1]
+        if isinstance(image_data, str):
+            # Handle base64 string (with or without data URL prefix)
+            if image_data.startswith('data:image'):
+                # Strip the data URL prefix
+                image_data = image_data.split(',')[1]
+            # Decode the base64 string to bytes
             image_bytes = base64.b64decode(image_data)
+            
+            # Load the image with PIL to ensure correct format
+            image = Image.open(io.BytesIO(image_bytes))
+            
+            # Convert to RGB if needed (ensures correct color format)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Re-save as PNG to ensure consistency
+            buffer = io.BytesIO()
+            image.save(buffer, format='PNG')
+            image_bytes = buffer.getvalue()
+            
         elif isinstance(image_data, (bytes, bytearray)):
             image_bytes = image_data
         else:
@@ -323,6 +349,57 @@ def save_image_and_get_url(image_data, call_id, image_type):
     
     except Exception as e:
         logger.error(f"Failed to save image {call_id}_{image_type}: {str(e)}")
+        logger.error(traceback.format_exc())
+        return None
+
+def create_visualization_with_keypoints(image_base64, keypoints, call_id, image_type='viz'):
+    """Create a visualization image with keypoints drawn and save it."""
+    try:
+        # Decode the image
+        if ',' in image_base64:
+            image_base64 = image_base64.split(',', 1)[1]
+        image_bytes = base64.b64decode(image_base64)
+        image = Image.open(io.BytesIO(image_bytes))
+        
+        # Convert to RGB if needed
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Draw keypoints on the image
+        draw = ImageDraw.Draw(image)
+        for i, kp in enumerate(keypoints):
+            x = kp.get('x', kp[0] if isinstance(kp, (list, tuple)) else 0)
+            y = kp.get('y', kp[1] if isinstance(kp, (list, tuple)) else 0)
+            
+            # Draw keypoint as a circle (larger radius for visibility)
+            radius = 8
+            draw.ellipse([x-radius, y-radius, x+radius, y+radius], 
+                        fill='red', outline='white', width=2)
+            
+            # Draw keypoint number
+            draw.text((x+10, y-10), str(i+1), fill='yellow')
+        
+        # Save the visualization
+        buffer = io.BytesIO()
+        image.save(buffer, format='PNG')
+        image_bytes = buffer.getvalue()
+        
+        # Ensure directory exists
+        os.makedirs(IMAGES_DIR, exist_ok=True)
+        
+        # Generate filename
+        filename = f"{call_id}_{image_type}.png"
+        filepath = os.path.join(IMAGES_DIR, filename)
+        
+        # Save to disk
+        with open(filepath, 'wb') as f:
+            f.write(image_bytes)
+        
+        # Return URL path
+        return f"/api_images/{filename}"
+    
+    except Exception as e:
+        logger.error(f"Failed to create visualization {call_id}_{image_type}: {str(e)}")
         return None
 
 # Route to serve API images

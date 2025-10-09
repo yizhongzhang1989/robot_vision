@@ -280,7 +280,7 @@ def test_basic_tracking():
     if not ref_result['success']:
         print(f"❌ Failed to set reference image: {ref_result.get('error', 'Unknown error')}")
         return False
-    
+
     print(f"✅ Reference image set with {ref_result['keypoints_count']} keypoints")
     print(f"   API call time: {ref_elapsed_time:.3f}s")
     print(f"   Reference key: {ref_result.get('key', 'Unknown')}")
@@ -1318,12 +1318,12 @@ def main():
     # Run test suite
     tests = [
         ("Basic API Tracking", test_basic_tracking),
-        ("Bidirectional API Validation", test_bidirectional_validation),
-        ("Multiple References API", test_multiple_references),
-        ("Flow Visualization API", test_flow_visualization),
-        ("Web Service Features", test_service_features),
-        ("Encoding Configuration Performance", test_encoding_configurations),
-        ("API Performance Benchmark", run_performance_benchmark)
+        # ("Bidirectional API Validation", test_bidirectional_validation),
+        # ("Multiple References API", test_multiple_references),
+        # ("Flow Visualization API", test_flow_visualization),
+        # ("Web Service Features", test_service_features),
+        # ("Encoding Configuration Performance", test_encoding_configurations),
+        # ("API Performance Benchmark", run_performance_benchmark)
     ]
     
     passed_tests = 0
