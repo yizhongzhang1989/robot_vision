@@ -851,13 +851,14 @@ def test_subdirectory(subdir_path, tracker):
     return results
 
 
-def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_THRESHOLD):
+def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_THRESHOLD, skip_existing=False):
     """
     Run tests on all subdirectories in test_dataset.
     
     Args:
         service_url (str): URL of FlowFormer++ web service
         max_error_threshold (float): Maximum error threshold in pixels for color mapping
+        skip_existing (bool): If True, skip subdirectories that already have reports
         
     Returns:
         dict: Complete test results
@@ -867,6 +868,7 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_
     print(f"Service URL: {service_url}")
     print("Bidirectional validation: Enabled")
     print(f"Max error threshold: {max_error_threshold} pixels")
+    print(f"Skip existing reports: {'Yes' if skip_existing else 'No'}")
     print(f"Dataset directory: {TEST_DATASET_DIR}")
     print("=" * 80)
     
@@ -913,7 +915,17 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_
     
     start_time = time.time()
     
-    for subdir in sorted(subdirs):
+    for idx, subdir in enumerate(sorted(subdirs), 1):
+        # Check if report already exists and skip_existing is enabled
+        report_subdir = Path(REPORTS_DIR) / subdir.name
+        if skip_existing and report_subdir.exists():
+            report_html = report_subdir / "report.html"
+            if report_html.exists():
+                print(f"\n⏭️  [{idx}/{len(subdirs)}] Skipping '{subdir.name}' (report already exists)")
+                continue
+        
+        print(f"\n🔍 [{idx}/{len(subdirs)}] Processing: {subdir.name}")
+        
         subdir_results = test_subdirectory(subdir, tracker)
         if subdir_results:
             all_results['subdirectories'].append(subdir_results)
@@ -980,6 +992,8 @@ Examples:
   python tests/run_test_dataset.py
   python tests/run_test_dataset.py --url http://server:8001
   python tests/run_test_dataset.py --max-error 15.0
+  python tests/run_test_dataset.py --skip-existing
+  python tests/run_test_dataset.py -s --max-error 8.0
         """
     )
     
@@ -987,6 +1001,8 @@ Examples:
                         help='FlowFormer++ web service URL (default: http://localhost:8001)')
     parser.add_argument('--max-error', '-m', type=float, default=MAX_ERROR_THRESHOLD,
                         help=f'Maximum error threshold in pixels for color mapping (default: {MAX_ERROR_THRESHOLD})')
+    parser.add_argument('--skip-existing', '-s', action='store_true',
+                        help='Skip subdirectories that already have reports generated')
     
     args = parser.parse_args()
     
@@ -994,7 +1010,11 @@ Examples:
     service_url = args.url if args.url else WEB_SERVICE_URL
     
     # Run tests
-    results = run_test_dataset(service_url=service_url, max_error_threshold=args.max_error)
+    results = run_test_dataset(
+        service_url=service_url, 
+        max_error_threshold=args.max_error,
+        skip_existing=args.skip_existing
+    )
     
     if results is None:
         print("\n❌ Test run failed - check errors above")
