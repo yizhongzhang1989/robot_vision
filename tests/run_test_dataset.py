@@ -3,7 +3,87 @@
 Test Dataset Runner
 
 This script automatically tests keypoint tracking across all subdirectories in /test_dataset.
+
+================================================================================
+TEST DATASET ORGANIZATION
+================================================================================
+
+Directory Structure:
+--------------------
+test_dataset/
+├── subdir_1/                    # Test scenario 1
+│   ├── image1.jpg              # Reference image (has JSON)
+│   ├── image1.json             # Keypoint annotations for image1
+│   ├── image2.jpg              # Target image (may or may not have JSON)
+│   ├── image3.jpg              # Another target image
+│   └── ...
+├── subdir_2/                    # Test scenario 2
+│   ├── ref_image.jpg
+│   ├── ref_image.json
+│   ├── target1.jpg
+│   └── ...
+└── reports/                     # Auto-generated reports (excluded from testing)
+    ├── subdir_1/
+    │   ├── report.html
+    │   ├── image1_to_image2.jpg
+    │   └── ...
+    └── subdir_2/
+        └── ...
+
+JSON Keypoint Format:
+---------------------
+Each JSON file should contain keypoint annotations in one of these formats:
+
+Format 1 (with keypoints key):
+{
+    "keypoints": [
+        {"x": 100.5, "y": 200.3},
+        {"x": 150.2, "y": 180.7},
+        ...
+    ]
+}
+
+Format 2 (direct array):
+[
+    {"x": 100.5, "y": 200.3},
+    {"x": 150.2, "y": 180.7},
+    ...
+]
+
+Testing Process:
+----------------
 For each subdirectory:
+1. Find all image-JSON pairs (reference images with keypoint annotations)
+2. For each reference image:
+   - Set it as the reference with its keypoints
+   - Track keypoints on ALL other images in the same subdirectory
+   - This includes images that have JSON and images that don't
+3. Generate visualization with color-coded error
+4. Create HTML report with statistics
+
+Example Test Scenario:
+----------------------
+If subdir_1 contains:
+- image1.jpg + image1.json (5 keypoints)
+- image2.jpg + image2.json (3 keypoints)  
+- image3.jpg (no JSON)
+
+The script will perform:
+1. Reference: image1.jpg → Track on image2.jpg and image3.jpg
+2. Reference: image2.jpg → Track on image1.jpg and image3.jpg
+Total: 4 tracking tests
+
+Output Reports:
+---------------
+For each subdirectory, generates:
+- HTML report: test_dataset/reports/<subdir_name>/report.html
+- Visualization images: Side-by-side comparisons with color-coded keypoints
+  - Left: Reference image with red crosses
+  - Right: Target image with color-coded crosses (green=good, red=bad)
+
+================================================================================
+
+Script Functionality:
 1. Find all images with corresponding JSON keypoint files
 2. For each reference image (with JSON), track keypoints on all other images in the directory
 3. Track both images with and without JSON files
