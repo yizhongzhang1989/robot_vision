@@ -7,6 +7,13 @@ For each subdirectory:
 1. Find all images with corresponding JSON keypoint files
 2. For each reference image (with JSON), track keypoints on all other images in the directory
 3. Track both images with and without JSON files
+4. Always uses bidirectional validation for accuracy assessment
+5. Generates color-coded visualization based on tracking error
+
+Color Coding:
+- Reference keypoints: Red crosses
+- Tracked keypoints: Color-coded from green (low error) to red (high error)
+- Default max error threshold: 10.0 pixels (configurable)
 
 The script uses the FlowFormer++ web API for tracking, similar to the example in
 examples/ffpp_webapi_keypoint_tracker_example.py.
@@ -14,7 +21,7 @@ examples/ffpp_webapi_keypoint_tracker_example.py.
 Usage:
     python tests/run_test_dataset.py
     python tests/run_test_dataset.py --url http://server:8001
-    python tests/run_test_dataset.py --bidirectional
+    python tests/run_test_dataset.py --max-error 15.0
 """
 
 import os
@@ -37,6 +44,7 @@ from core.ffpp_webapi_keypoint_tracker import FFPPWebAPIKeypointTracker
 WEB_SERVICE_URL = "http://msraig-ubuntu-2:8001"
 TEST_DATASET_DIR = "test_dataset"
 REPORTS_DIR = "test_dataset/reports"
+MAX_ERROR_THRESHOLD = 10.0  # Maximum error in pixels for color mapping
 
 
 def load_keypoints_from_json(json_path):
@@ -125,31 +133,107 @@ def find_all_images(directory):
     return images
 
 
-def draw_keypoints_on_image(image, keypoints, color=(0, 0, 255), marker_size=10, thickness=2):
+def smooth_color_transition(value):
+    """
+    Create smooth color transition for values from 0 to 1.
+    
+    Color progression:
+    0.0 -> (0,255,0)   Green (good)
+    0.25 -> (0,255,255) Cyan  
+    0.5 -> (0,0,255)   Blue
+    0.75 -> (255,0,255) Magenta
+    1.0 -> (255,0,0)   Red (bad)
+    
+    Args:
+        value (float): Value between 0 and 1
+        
+    Returns:
+        tuple: (B, G, R) color values for OpenCV
+    """
+    # Clamp value to [0, 1]
+    value = max(0.0, min(1.0, value))
+    
+    # Define the 5 key colors in BGR format for OpenCV
+    colors_bgr = [
+        (0, 255, 0),    # Green (0.0) - good
+        (255, 255, 0),  # Cyan (0.25)
+        (255, 0, 0),    # Blue (0.5)
+        (255, 0, 255),  # Magenta (0.75)
+        (0, 0, 255)     # Red (1.0) - bad
+    ]
+    
+    # Scale value to segment index
+    scaled_value = value * 4  # 4 segments between 5 colors
+    segment_index = int(scaled_value)
+    local_t = scaled_value - segment_index
+    
+    # Handle edge case
+    if segment_index >= 4:
+        segment_index = 3
+        local_t = 1.0
+    
+    # Get the two colors to interpolate between
+    color1_bgr = colors_bgr[segment_index]
+    color2_bgr = colors_bgr[segment_index + 1]
+    
+    # Linear interpolation between the two colors
+    b = int(color1_bgr[0] * (1 - local_t) + color2_bgr[0] * local_t)
+    g = int(color1_bgr[1] * (1 - local_t) + color2_bgr[1] * local_t)
+    r = int(color1_bgr[2] * (1 - local_t) + color2_bgr[2] * local_t)
+    
+    # Return in BGR format for OpenCV
+    return (b, g, r)
+
+
+def consistency_to_color(consistency_distance, max_distance=MAX_ERROR_THRESHOLD):
+    """
+    Map consistency distance (error) to color using smooth transition.
+    
+    Args:
+        consistency_distance (float): Consistency distance in pixels
+        max_distance (float): Maximum distance to map to red (default: from config)
+        
+    Returns:
+        tuple: (B, G, R) color values for OpenCV
+    """
+    # Normalize consistency distance to [0, 1] range
+    normalized_value = min(consistency_distance / max_distance, 1.0)
+    return smooth_color_transition(normalized_value)
+
+
+def draw_keypoints_on_image(image, keypoints, color=(0, 0, 255), marker_size=10, thickness=2, consistency_distances=None, max_error=MAX_ERROR_THRESHOLD):
     """
     Draw keypoints as crosses on an image.
     
     Args:
         image: Image array (will be copied, not modified in place)
         keypoints: List of keypoint dicts with 'x' and 'y' fields
-        color: BGR color tuple (default: red (0, 0, 255))
+        color: BGR color tuple (default: red (0, 0, 255)) - used if consistency_distances is None
         marker_size: Size of the cross marker in pixels
         thickness: Line thickness
+        consistency_distances: Optional list of consistency distances for color mapping
+        max_error: Maximum error threshold for color mapping
         
     Returns:
         Image with keypoints drawn
     """
     img_with_kps = image.copy()
     
-    for kp in keypoints:
+    for i, kp in enumerate(keypoints):
         x = int(round(kp['x']))
         y = int(round(kp['y']))
         
+        # Determine color for this keypoint
+        if consistency_distances is not None and i < len(consistency_distances):
+            kp_color = consistency_to_color(consistency_distances[i], max_error)
+        else:
+            kp_color = color
+        
         # Draw a cross
         # Horizontal line
-        cv2.line(img_with_kps, (x - marker_size, y), (x + marker_size, y), color, thickness)
+        cv2.line(img_with_kps, (x - marker_size, y), (x + marker_size, y), kp_color, thickness)
         # Vertical line
-        cv2.line(img_with_kps, (x, y - marker_size), (x, y + marker_size), color, thickness)
+        cv2.line(img_with_kps, (x, y - marker_size), (x, y + marker_size), kp_color, thickness)
     
     return img_with_kps
 
@@ -210,8 +294,19 @@ def generate_visualization_images(subdir_path, subdir_results, output_dir):
             # Draw red crosses on reference image
             ref_img_with_kps = draw_keypoints_on_image(ref_img, ref_keypoints, color=(0, 0, 255))
             
-            # Draw green crosses on target image
-            target_img_with_kps = draw_keypoints_on_image(target_img, tracked_keypoints, color=(0, 255, 0))
+            # Draw color-coded crosses on target image based on consistency distance
+            # Extract consistency distances if available
+            consistency_distances = None
+            if tracked_keypoints:
+                consistency_distances = [kp.get('consistency_distance', 0) for kp in tracked_keypoints]
+            
+            target_img_with_kps = draw_keypoints_on_image(
+                target_img, 
+                tracked_keypoints, 
+                color=(0, 255, 0),  # Default green if no consistency data
+                consistency_distances=consistency_distances,
+                max_error=MAX_ERROR_THRESHOLD
+            )
             
             # Create side-by-side image
             h1, w1 = ref_img_with_kps.shape[:2]
@@ -257,20 +352,27 @@ def generate_visualization_images(subdir_path, subdir_results, output_dir):
             output_path = output_dir / output_filename
             cv2.imwrite(str(output_path), combined_img)
             
-            generated_images.append({
+            # Prepare image info
+            img_info = {
                 'filename': output_filename,
                 'reference_image': ref_img_path.name,
                 'target_image': target_img_path.name,
                 'num_keypoints': result.get('num_keypoints_tracked', 0),
                 'success': result.get('success', False)
-            })
+            }
+            
+            # Add consistency stats if available
+            if 'consistency_stats' in result:
+                img_info['consistency_stats'] = result['consistency_stats']
+            
+            generated_images.append(img_info)
             
             print(f"  ✅ Generated: {output_filename}")
     
     return generated_images
 
 
-def generate_html_report(subdir_name, subdir_results, generated_images, output_dir):
+def generate_html_report(subdir_name, subdir_results, generated_images, output_dir, max_error_threshold=MAX_ERROR_THRESHOLD):
     """
     Generate HTML report for a subdirectory.
     
@@ -279,6 +381,7 @@ def generate_html_report(subdir_name, subdir_results, generated_images, output_d
         subdir_results (dict): Tracking results
         generated_images (list): List of generated image info
         output_dir (Path): Output directory for HTML file
+        max_error_threshold (float): Maximum error threshold for display
         
     Returns:
         Path: Path to generated HTML file
@@ -445,7 +548,18 @@ def generate_html_report(subdir_name, subdir_results, generated_images, output_d
                 <span class="color-box red"></span> <strong>Red crosses:</strong> Reference keypoints (original positions)
             </p>
             <p>
-                <span class="color-box green"></span> <strong>Green crosses:</strong> Tracked keypoints (predicted positions in target image)
+                <strong>Tracked keypoints (color-coded by error):</strong>
+            </p>
+            <ul style="margin-top: 5px;">
+                <li><span class="color-box green"></span> <strong>Green:</strong> Excellent tracking (0.0 - {max_error_threshold*0.25:.1f} pixels error)</li>
+                <li><span class="color-box" style="background-color: cyan;"></span> <strong>Cyan:</strong> Good tracking ({max_error_threshold*0.25:.1f} - {max_error_threshold*0.5:.1f} pixels error)</li>
+                <li><span class="color-box" style="background-color: blue;"></span> <strong>Blue:</strong> Moderate error ({max_error_threshold*0.5:.1f} - {max_error_threshold*0.75:.1f} pixels error)</li>
+                <li><span class="color-box" style="background-color: magenta;"></span> <strong>Magenta:</strong> High error ({max_error_threshold*0.75:.1f} - {max_error_threshold:.1f} pixels error)</li>
+                <li><span class="color-box red"></span> <strong>Red:</strong> Very high error (≥ {max_error_threshold:.1f} pixels)</li>
+            </ul>
+            <p style="margin-top: 10px; font-size: 12px; color: #666;">
+                <strong>Note:</strong> Maximum error threshold is set to {max_error_threshold} pixels. 
+                Errors beyond this threshold are displayed in red.
             </p>
         </div>
         
@@ -458,6 +572,19 @@ def generate_html_report(subdir_name, subdir_results, generated_images, output_d
         target_name = img_info['target_image']
         num_kps = img_info['num_keypoints']
         
+        # Get consistency stats if available
+        consistency_info = ""
+        if 'consistency_stats' in img_info:
+            stats = img_info['consistency_stats']
+            mean_error = stats.get('mean_consistency_distance', 0)
+            max_error = stats.get('max_consistency_distance', 0)
+            high_acc = stats.get('high_accuracy_count', 0)
+            consistency_info = f"""
+                <span><strong>Mean error:</strong> {mean_error:.2f} px</span>
+                <span><strong>Max error:</strong> {max_error:.2f} px</span>
+                <span><strong>High accuracy (&lt;1px):</strong> {high_acc}/{num_kps}</span>
+            """
+        
         html_content += f"""
         <div class="image-pair">
             <h3>{ref_name} → {target_name}</h3>
@@ -465,6 +592,7 @@ def generate_html_report(subdir_name, subdir_results, generated_images, output_d
             <div class="image-info">
                 <span><strong>Keypoints tracked:</strong> {num_kps}</span>
                 <span><strong>Status:</strong> {'✅ Success' if img_info['success'] else '❌ Failed'}</span>
+                {consistency_info}
             </div>
         </div>
 """
@@ -489,7 +617,7 @@ def generate_html_report(subdir_name, subdir_results, generated_images, output_d
     return html_path
 
 
-def test_subdirectory(subdir_path, tracker, bidirectional=False):
+def test_subdirectory(subdir_path, tracker):
     """
     Test keypoint tracking for all images in a subdirectory.
     
@@ -499,7 +627,6 @@ def test_subdirectory(subdir_path, tracker, bidirectional=False):
     Args:
         subdir_path (Path): Path to subdirectory
         tracker: FFPPWebAPIKeypointTracker instance
-        bidirectional (bool): Whether to use bidirectional validation
         
     Returns:
         dict: Results dictionary containing tracking statistics and results
@@ -583,7 +710,7 @@ def test_subdirectory(subdir_path, tracker, bidirectional=False):
             track_result = tracker.track_keypoints(
                 target_img, 
                 reference_name=ref_name,
-                bidirectional=bidirectional
+                bidirectional=True
             )
             track_time = time.time() - track_start_time
             
@@ -591,9 +718,9 @@ def test_subdirectory(subdir_path, tracker, bidirectional=False):
                 tracked_kps = len(track_result.get('tracked_keypoints', []))
                 service_time = track_result.get('total_processing_time', 0)
                 
-                # Calculate statistics if bidirectional
+                # Calculate statistics from bidirectional validation
                 consistency_info = ""
-                if bidirectional and 'bidirectional_stats' in track_result:
+                if 'bidirectional_stats' in track_result:
                     stats = track_result['bidirectional_stats']
                     mean_consistency = stats.get('mean_consistency_distance', 0)
                     high_acc = stats.get('high_accuracy_count', 0)
@@ -616,10 +743,10 @@ def test_subdirectory(subdir_path, tracker, bidirectional=False):
                     'num_keypoints_tracked': tracked_kps,
                     'api_call_time': track_time,
                     'service_processing_time': service_time,
-                    'bidirectional_enabled': bidirectional
+                    'bidirectional_enabled': True
                 }
                 
-                if bidirectional and 'bidirectional_stats' in track_result:
+                if 'bidirectional_stats' in track_result:
                     result_entry['consistency_stats'] = track_result['bidirectional_stats']
                 
                 results['tracking_results'].append(result_entry)
@@ -644,13 +771,13 @@ def test_subdirectory(subdir_path, tracker, bidirectional=False):
     return results
 
 
-def run_test_dataset(service_url=WEB_SERVICE_URL, bidirectional=False):
+def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_THRESHOLD):
     """
     Run tests on all subdirectories in test_dataset.
     
     Args:
         service_url (str): URL of FlowFormer++ web service
-        bidirectional (bool): Whether to use bidirectional validation
+        max_error_threshold (float): Maximum error threshold in pixels for color mapping
         
     Returns:
         dict: Complete test results
@@ -658,7 +785,8 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, bidirectional=False):
     print("🧪 Test Dataset Runner")
     print("=" * 80)
     print(f"Service URL: {service_url}")
-    print(f"Bidirectional validation: {'Enabled' if bidirectional else 'Disabled'}")
+    print("Bidirectional validation: Enabled")
+    print(f"Max error threshold: {max_error_threshold} pixels")
     print(f"Dataset directory: {TEST_DATASET_DIR}")
     print("=" * 80)
     
@@ -685,7 +813,9 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, bidirectional=False):
         print(f"❌ Test dataset directory not found: {TEST_DATASET_DIR}")
         return None
     
-    subdirs = [d for d in dataset_path.iterdir() if d.is_dir()]
+    # Get all subdirectories, excluding the reports directory
+    reports_dir_name = Path(REPORTS_DIR).name
+    subdirs = [d for d in dataset_path.iterdir() if d.is_dir() and d.name != reports_dir_name]
     
     if not subdirs:
         print(f"⚠️ No subdirectories found in {TEST_DATASET_DIR}")
@@ -697,14 +827,14 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, bidirectional=False):
     all_results = {
         'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
         'service_url': service_url,
-        'bidirectional_enabled': bidirectional,
+        'bidirectional_enabled': True,
         'subdirectories': []
     }
     
     start_time = time.time()
     
     for subdir in sorted(subdirs):
-        subdir_results = test_subdirectory(subdir, tracker, bidirectional)
+        subdir_results = test_subdirectory(subdir, tracker)
         if subdir_results:
             all_results['subdirectories'].append(subdir_results)
             
@@ -715,7 +845,7 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, bidirectional=False):
             generated_images = generate_visualization_images(subdir, subdir_results, report_output_dir)
             
             # Generate HTML report
-            html_path = generate_html_report(subdir.name, subdir_results, generated_images, report_output_dir)
+            html_path = generate_html_report(subdir.name, subdir_results, generated_images, report_output_dir, max_error_threshold)
             
             # Store report path in results
             subdir_results['report_path'] = str(html_path)
@@ -769,15 +899,14 @@ def main():
 Examples:
   python tests/run_test_dataset.py
   python tests/run_test_dataset.py --url http://server:8001
-  python tests/run_test_dataset.py --bidirectional
-  python tests/run_test_dataset.py --url http://gpu-server:8001 --bidirectional
+  python tests/run_test_dataset.py --max-error 15.0
         """
     )
     
     parser.add_argument('--url', '-u', type=str, 
                         help='FlowFormer++ web service URL (default: http://localhost:8001)')
-    parser.add_argument('--bidirectional', '-b', action='store_true',
-                        help='Enable bidirectional flow validation for accuracy assessment')
+    parser.add_argument('--max-error', '-m', type=float, default=MAX_ERROR_THRESHOLD,
+                        help=f'Maximum error threshold in pixels for color mapping (default: {MAX_ERROR_THRESHOLD})')
     
     args = parser.parse_args()
     
@@ -785,7 +914,7 @@ Examples:
     service_url = args.url if args.url else WEB_SERVICE_URL
     
     # Run tests
-    results = run_test_dataset(service_url=service_url, bidirectional=args.bidirectional)
+    results = run_test_dataset(service_url=service_url, max_error_threshold=args.max_error)
     
     if results is None:
         print("\n❌ Test run failed - check errors above")
