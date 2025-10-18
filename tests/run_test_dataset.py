@@ -850,8 +850,249 @@ def test_subdirectory(subdir_path, tracker):
     
     return results
 
+############################################################################
+def utils_save_patch_image(patch_image, save_path, keypoints, color=(0, 0, 255)):
+    """
+    Utility function to save patch image with keypoint marked.
 
-def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_THRESHOLD, skip_existing=False):
+    Args:
+        patch_image: Patch image
+        save_path: Path to save the image
+        keypoints: List of keypoint dicts with 'x' and 'y' fields
+    """
+    patch = patch_image.copy()
+    for kp in keypoints:
+        x, y = int(round(kp["x"])), int(round(kp["y"]))
+        cv2.drawMarker(patch, (x, y), color, markerType=cv2.MARKER_CROSS, markerSize=20, thickness=2)
+    cv2.imwrite(save_path, patch)
+
+
+def preprocess_for_keypoints(image):
+    """
+    Preprocess an image for keypoint detection/tracking.
+    """
+ 
+
+    # 1. CLAHE per channel
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    lab = cv2.merge((l, a, b))
+    enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    # 2. Denoise (bilateral filter)
+    denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+    # 3. Sharpen (unsharp masking)
+    blur = cv2.GaussianBlur(denoised, (9, 9), 10)
+    sharpened = cv2.addWeighted(denoised, 1.5, blur, -0.5, 0)
+
+    # return sharpened
+    # 5. Normalize intensity
+    normalized = cv2.normalize(sharpened, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+
+    return normalized
+
+
+def utils_patch_crop_and_resize(image, keypoints, patch_size, scale_size):
+    """
+    Utility function to crop patches around keypoints and resize them.
+    Args:
+        image: Original image
+        keypoints: List of keypoint dicts with 'x' and 'y' fields
+        patch_size (int): Size of the square patch around each keypoint
+        scale_size (int): scale size
+    Returns:
+        list: List of patch dicts with 'id', 'patch_image', 'original_x', 'original_y', 'patch_x', 'patch_y' fields, where 'patch_x' and 'patch_y' are the keypoint coordinates in the resized patch, and 'original_x', 'original_y' are the coordinates in the original image.
+    """
+    patches = []
+    img_h, img_w = image.shape[:2]
+    image = preprocess_for_keypoints(image)
+    for kp in keypoints:
+        pid = kp.get("id")
+        float_x, float_y = kp["x"], kp["y"]
+        x, y = int(round(float_x)), int(round(float_y))
+        x1, y1 = max(0, x - patch_size // 2), max(0, y - patch_size // 2)
+        x2, y2 = min(img_w, x + patch_size // 2), min(img_h, y + patch_size // 2)
+        patch = image[y1:y2, x1:x2]
+        h, w = patch.shape[:2]
+        scale = scale_size / max(h, w)
+        # patch = image_sharpen(patch)
+        patch_resized = cv2.resize(patch, (int(w * scale), int(h * scale)))
+        # patch_resized = image_sharpen(patch_resized)
+        # redefine keypoint position in patch
+        patch_x, patch_y = (float_x - x1) * scale, (float_y - y1) * scale
+        patches.append({"id": pid, "patch_image": patch_resized, "size_scale": scale, "original_x": float_x, "original_y": float_y, "patch_x": patch_x, "patch_y": patch_y})
+
+    return patches
+
+
+def compute_original_coordinates(patch_info, tracked_kp):
+    """
+    Utility function to compute original image coordinates from patch tracking results.
+    Args:
+        patch_info: Patch info dict with 'id', 'original_x', 'original_y', 'patch_x', 'patch_y', 'scale', fields
+        tracked_kp: List of tracked keypoint dict with 'x' and 'y' fields in the patch coordinate
+    Returns:
+        list: List of tracked keypoint dict with 'x' and 'y' fields in the original image coordinate
+    """
+    scale = patch_info["size_scale"]
+    updated_keypoints = []
+    for kp in tracked_kp:
+        x = patch_info["original_x"] + (kp["x"] - patch_info["patch_x"]) / scale
+        y = patch_info["original_y"] + (kp["y"] - patch_info["patch_y"]) / scale
+        updated_keypoints.append({"x": x, "y": y})
+    return updated_keypoints
+
+
+def test_subdirectory_with_imagepatch(subdir_path, tracker, prev_tracking_results, patch_size=64, scale_size=256):
+    """
+    Test keypoint tracking for all images in a subdirectory using image patches.
+    This function should be called after "test_subdirectory" to leverage initial keypoints.
+
+    For each reference image with JSON:
+        - Track keypoints on all other images (with and without JSON)
+        - Use initial keypoint guesses from the "test_subdirectory" results to create image patches
+          around those keypoints for tracking, improving tracking accuracy.
+
+    Args:
+        subdir_path (Path): Path to the subdirectory
+        tracker: FFPPWebAPIKeypointTracker instance
+        prev_tracking_results: List of previous tracking results from "test_subdirectory"
+        patch_size (int): Size of the square patch around each keypoint (default: 64)
+        scale_size (int): Size to which each patch is resized before sending to the tracker (default: 256)
+        For compatibility with FFPP API, patch_size and scale_size should be multiple of 8.
+
+    Returns:
+        dict: Results dictionary containing tracking statistics and results
+
+    """
+    if not prev_tracking_results or "tracking_results" not in prev_tracking_results:
+        print(f"❌ Previous tracking results are required for image patch tracking in {subdir_path.name}")
+        return
+
+    print(f"\n{'=' * 80}")
+    print(f"📁 Processing subdirectory with image patches: {subdir_path.name}")
+    print(f"{'=' * 80}")
+
+    # Ensure patch_size and scale_size are multiples of 8
+    patch_size = 128 if patch_size <= 0 else patch_size
+    scale_size = 256 if scale_size <= 0 else scale_size
+    if patch_size % 8 != 0:
+        patch_size += 8 - (patch_size % 8)
+    if scale_size % 8 != 0:
+        scale_size += 8 - (scale_size % 8)
+
+    # Set debug mode for visualization of patches
+    debug_mode = False
+
+    patch_ref_images_cache = {}
+    for entry in prev_tracking_results["tracking_results"]:
+        if not entry["success"]:
+            continue
+        entry["use_patches"] = True  # Indicate to use patches for tracking
+        ref_image_path = entry["reference_image_path"]
+        ref_image_name = Path(ref_image_path).stem
+        ref_keypoints = entry["reference_keypoints"]
+        
+        ref_existence = False
+        if ref_image_path not in patch_ref_images_cache:
+            try:
+                ref_img = cv2.imread(str(ref_image_path))
+                patch_ref_image = utils_patch_crop_and_resize(ref_img, ref_keypoints, patch_size, scale_size)
+                patch_ref_images_cache[ref_image_path] = patch_ref_image
+            except Exception as e:
+                print(f"❌ Exception loading reference image: {ref_image_path} | {e}")
+                continue
+        else:
+            patch_ref_image = patch_ref_images_cache[ref_image_path]
+            ref_existence = True
+
+        target_image_path = entry["target_image_path"]
+        target_image_name = Path(target_image_path).stem
+        targe_keypoints = entry["tracked_keypoints"]
+        patch_target_image = utils_patch_crop_and_resize(cv2.imread(str(target_image_path)), targe_keypoints, patch_size, scale_size)
+
+        # Track using patches
+        # for each patch in patch_ref_image, find corresponding patch in patch_target_image by id
+        patch_tracking_results = []
+        mean_error = []
+        for p_ref in patch_ref_image:
+            pid = p_ref["id"]
+            p_target = next((p for p in patch_target_image if p["id"] == pid), None)
+            if p_target is None:
+                print(f"❌ No matching target patch found for keypoint id {pid} in image {target_image_name}")
+                continue
+
+            # Track keypoint using patches
+
+            # Set reference in tracker
+            ref_image_name = f"ref_patch_{pid}"
+            ref_start_time = time.time()
+            ref_result = tracker.set_reference_image(p_ref["patch_image"], [{"x": p_ref["patch_x"], "y": p_ref["patch_y"]}], ref_image_name)
+            size_scale = p_ref["size_scale"] 
+            ref_time = time.time() - ref_start_time
+            if not ref_result.get("success"):
+                print(f"❌ Failed to set patch reference for keypoint id {pid}: {ref_result.get('error')}")
+                continue
+            # print(f"✅ Reference set in {ref_time:.3f}s")
+
+            track_start_time = time.time()
+            track_result = tracker.track_keypoints(p_target["patch_image"], reference_name=f"ref_patch_{pid}", bidirectional=True)
+            track_time = time.time() - track_start_time
+
+            if track_result.get("success"):
+                tracked_pts = track_result.get("tracked_keypoints", [])
+                tracked_kps = len(tracked_pts)
+                # service_time = track_result.get("total_processing_time", 0)
+                update_tracked_pts = compute_original_coordinates(p_target, tracked_pts)
+                # patch_tracking_results.append({"id": pid, "x": update_tracked_pts[0]["x"], "y": update_tracked_pts[0]["y"]})
+                new_kp = {"id": pid, "x": update_tracked_pts[0]["x"], "y": update_tracked_pts[0]["y"]}
+                # print(f"  ✅ Patch Keypoint ID {pid:<5} | Time: {track_time:.3f}s | Tracked: {tracked_kps:2d}")
+                # consistency_info = ""
+                if 'bidirectional_stats' in track_result:
+
+                    stats = track_result['bidirectional_stats']
+                    mean_consistency = stats.get('mean_consistency_distance', 0) / size_scale
+                    mean_error.append(mean_consistency)
+                    new_kp["consistency_distance"] = mean_consistency
+                    # high_acc = stats.get('high_accuracy_count', 0)
+                    # consistency_info = f" | Consistency: {mean_consistency:.2f}px ({high_acc} high-acc)"
+                patch_tracking_results.append(new_kp)
+            else:
+                print(f"  ❌ Patch Keypoint ID {pid:<5} | Error: {track_result.get('error', 'Unknown')}")
+                pass
+            cleanup_result = tracker.remove_reference_image(f"{ref_image_name}_patch_{pid}")
+            if cleanup_result.get("success"):
+                print("✅ Patch Reference cleaned up")
+
+        entry["tracked_keypoints"] = patch_tracking_results
+        mean_consistency = sum(mean_error) / len(mean_error) if mean_error else 0
+        max_consistency = max(mean_error) if mean_error else 0
+        entry["consistency_stats"]["mean_consistency_distance"] = mean_consistency
+        entry["consistency_stats"]["max_consistency_distance"] = max_consistency
+
+        if debug_mode:
+            # debug, dump patches
+            debug_dir = subdir_path / "debug_patches"
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            if not ref_existence:
+                for i, p in enumerate(patch_ref_image):
+                    filename = f"{ref_image_name}_p{p['id']}.jpg"
+                    utils_save_patch_image(p["patch_image"], str(debug_dir / filename), [{"x": p["patch_x"], "y": p["patch_y"]}])
+            for i, p in enumerate(patch_target_image):
+                filename = f"{target_image_name}_p{p['id']}.jpg"
+                utils_save_patch_image(p["patch_image"], str(debug_dir / filename), [{"x": p["patch_x"], "y": p["patch_y"]}], color=(0, 255, 0))
+
+    return prev_tracking_results
+
+
+############################################################################
+
+
+def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_THRESHOLD, skip_existing=False, use_patch=False, patch_size=64, patch_resize_size=256):
     """
     Run tests on all subdirectories in test_dataset.
     
@@ -928,6 +1169,9 @@ def run_test_dataset(service_url=WEB_SERVICE_URL, max_error_threshold=MAX_ERROR_
         
         subdir_results = test_subdirectory(subdir, tracker)
         if subdir_results:
+            if use_patch:
+                subdir_results = test_subdirectory_with_imagepatch(subdir, tracker, subdir_results, patch_size, patch_resize_size)
+
             all_results['subdirectories'].append(subdir_results)
             
             # Generate report for this subdirectory
@@ -1003,6 +1247,12 @@ Examples:
                         help=f'Maximum error threshold in pixels for color mapping (default: {MAX_ERROR_THRESHOLD})')
     parser.add_argument('--skip-existing', '-s', action='store_true',
                         help='Skip subdirectories that already have reports generated')
+    parser.add_argument('--patchsize', '-c', type=int, default=64,
+                        help='Size of the square patch around each keypoint for image patch tracking (default: 64)')
+    parser.add_argument('--patchscalesize', '-r', type=int, default=256,
+                        help='Size to which each patch is resized before sending to the tracker (default: 256)')
+    parser.add_argument('--usepatches', '-p', action='store_true',
+                        help='Use image patch tracking after initial tracking')
     
     args = parser.parse_args()
     
@@ -1013,7 +1263,10 @@ Examples:
     results = run_test_dataset(
         service_url=service_url, 
         max_error_threshold=args.max_error,
-        skip_existing=args.skip_existing
+        skip_existing=args.skip_existing,
+        use_patch = args.usepatches,
+        patch_size = args.patchsize,
+        patch_resize_size = args.patchscalesize
     )
     
     if results is None:
