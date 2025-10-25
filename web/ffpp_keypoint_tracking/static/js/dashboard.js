@@ -195,40 +195,116 @@ class DashboardMonitor {
             panelInfo.textContent = `${count || 0} ${type === 'ref' ? 'keypoints' : 'tracked'}`;
         }
 
-        // Update image and position keypoints after image loads
+        // Check if the image URL has actually changed
+        const existingImg = imageContainer.querySelector('.dashboard-image');
+        const currentSrc = existingImg ? existingImg.src : null;
+        
+        // Add cache-busting timestamp to ensure fresh load
+        const cacheBustedUrl = imageUrl + (imageUrl.includes('?') ? '&' : '?') + '_t=' + Date.now();
+        
+        // If image already exists and URL is the same (ignoring cache-buster), update in place
+        if (existingImg && currentSrc && currentSrc.split('?')[0] === new URL(imageUrl, window.location.origin).href) {
+            // Image hasn't changed, just update keypoints without flickering
+            const overlay = imageContainer.querySelector('.keypoints-overlay');
+            if (overlay && keypoints && keypoints.length > 0) {
+                const imgWidth = existingImg.naturalWidth;
+                const imgHeight = existingImg.naturalHeight;
+                this.positionKeypoints(existingImg, overlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
+            }
+            return;
+        }
+
+        // Create a new image element for preloading (prevent flicker)
         const img = new Image();
+        
+        // Set up error handler
+        img.onerror = () => {
+            console.error(`Failed to load image: ${imageUrl}`);
+            imageContainer.innerHTML = `
+                <div class="empty-state">
+                    <span class="empty-state-icon">⚠️</span>
+                    <h3>Failed to load image</h3>
+                    <p>Image may not be available</p>
+                </div>
+            `;
+        };
+        
         img.onload = () => {
             // Store image dimensions for keypoint positioning
             const imgWidth = img.naturalWidth;
             const imgHeight = img.naturalHeight;
             
-            // Create wrapper with image
-            imageContainer.innerHTML = `
-                <img src="${imageUrl}" alt="${type === 'ref' ? 'Reference' : 'Target'} Image" class="dashboard-image">
-                <div class="keypoints-overlay"></div>
-            `;
+            // Check if the container still exists (component might have unmounted)
+            if (!imageContainer || !imageContainer.parentElement) return;
             
-            // Get the actual displayed image element and overlay
-            const displayedImg = imageContainer.querySelector('.dashboard-image');
-            const overlay = imageContainer.querySelector('.keypoints-overlay');
+            // Use smooth transition instead of innerHTML replacement to prevent flicker
+            const existingImg = imageContainer.querySelector('.dashboard-image');
+            const existingOverlay = imageContainer.querySelector('.keypoints-overlay');
             
-            if (displayedImg && overlay && keypoints && keypoints.length > 0) {
-                // Position keypoints after image is rendered
+            if (existingImg && existingOverlay) {
+                // Update existing image smoothly
+                existingImg.style.opacity = '0';
                 setTimeout(() => {
-                    this.positionKeypoints(displayedImg, overlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
-                }, 10);
+                    if (existingImg.parentElement) {
+                        existingImg.src = cacheBustedUrl;
+                        existingImg.onload = () => {
+                            existingImg.style.opacity = '1';
+                            // Update keypoints after image transition
+                            if (keypoints && keypoints.length > 0) {
+                                this.positionKeypoints(existingImg, existingOverlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
+                            }
+                        };
+                    }
+                }, 150); // Match CSS transition time
+            } else {
+                // Create new image structure
+                imageContainer.innerHTML = `
+                    <img src="${cacheBustedUrl}" 
+                         alt="${type === 'ref' ? 'Reference' : 'Target'} Image" 
+                         class="dashboard-image"
+                         style="opacity: 0; transition: opacity 0.3s ease-in-out;">
+                    <div class="keypoints-overlay"></div>
+                `;
                 
-                // Reposition on window resize
-                const resizeHandler = () => {
-                    this.positionKeypoints(displayedImg, overlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
-                };
-                window.addEventListener('resize', resizeHandler);
+                const displayedImg = imageContainer.querySelector('.dashboard-image');
+                const overlay = imageContainer.querySelector('.keypoints-overlay');
                 
-                // Store handler for cleanup
-                displayedImg.dataset.resizeHandler = 'attached';
+                // Ensure image loads before showing
+                if (displayedImg) {
+                    displayedImg.onload = () => {
+                        displayedImg.style.opacity = '1';
+                        
+                        // Position keypoints after image is fully rendered
+                        if (overlay && keypoints && keypoints.length > 0) {
+                            // Use requestAnimationFrame for better timing
+                            requestAnimationFrame(() => {
+                                this.positionKeypoints(displayedImg, overlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
+                            });
+                        }
+                        
+                        // Add resize handler for responsive keypoint positioning
+                        const resizeHandler = () => {
+                            if (overlay && keypoints && keypoints.length > 0) {
+                                this.positionKeypoints(displayedImg, overlay, keypoints, imgWidth, imgHeight, type === 'ref' ? 'original' : 'tracked');
+                            }
+                        };
+                        
+                        // Clean up old resize handler if exists
+                        if (displayedImg.dataset.resizeHandler === 'attached') {
+                            window.removeEventListener('resize', displayedImg._resizeHandler);
+                        }
+                        
+                        // Store handler for cleanup
+                        displayedImg._resizeHandler = resizeHandler;
+                        displayedImg.dataset.resizeHandler = 'attached';
+                        window.addEventListener('resize', resizeHandler);
+                    };
+                }
             }
         };
-        img.src = imageUrl;
+        
+        // Start loading the image
+        img.src = cacheBustedUrl;
     }
 
     positionKeypoints(img, overlay, keypoints, originalWidth, originalHeight, type) {

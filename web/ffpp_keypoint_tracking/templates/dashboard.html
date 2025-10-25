@@ -164,11 +164,14 @@
             object-fit: contain;
             border-radius: 8px;
             display: block;
+            transition: opacity 0.3s ease-in-out;
+            will-change: opacity;
         }
 
         .keypoints-overlay {
             position: absolute;
             pointer-events: none;
+            transition: all 0.2s ease-out;
             /* Position and size will be set by JavaScript to match image */
         }
 
