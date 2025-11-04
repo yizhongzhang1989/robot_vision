@@ -325,8 +325,34 @@ check_model_status() {
 # Main execution
 main() {
     local action=${1:-download}
-    local model_name=${2:-all}
-    local force=${3:-false}
+    local model_name="all"
+    local force=false
+    
+    # Parse arguments
+    shift  # Remove action
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --skip-conda)
+                # Accept flag for consistency but models don't need conda
+                shift
+                ;;
+            --force)
+                force=true
+                shift
+                ;;
+            --model)
+                model_name="$2"
+                shift 2
+                ;;
+            *)
+                # For backward compatibility with positional args
+                if [ "$model_name" = "all" ]; then
+                    model_name="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
     
     case "$action" in
         "download")
@@ -364,14 +390,14 @@ main() {
             ;;
         *)
             print_error "Unknown action: $action"
-            echo "Usage: $0 [download|list|status|clean|verify] [model_name] [force]"
+            echo "Usage: $0 [download|list|status|clean|verify] [--model <name>] [--force]"
             echo ""
             echo "Actions:"
-            echo "  download [model_name] [force] - Download models (default: all models)"
-            echo "  list                          - List available models and their status"
-            echo "  status                        - Show download status summary"
-            echo "  clean [force]                 - Remove downloaded models"
-            echo "  verify                        - Verify integrity of downloaded models"
+            echo "  download [--model <name>] [--force] - Download models (default: all models)"
+            echo "  list                                - List available models and their status"
+            echo "  status                              - Show download status summary"
+            echo "  clean [--force]                     - Remove downloaded models"
+            echo "  verify                              - Verify integrity of downloaded models"
             return 1
             ;;
     esac

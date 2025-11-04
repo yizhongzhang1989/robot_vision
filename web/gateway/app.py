@@ -121,18 +121,24 @@ def get_dynamic_server_address(request_obj):
     # Get the Host header from the request
     host_header = request_obj.headers.get('Host', '')
     if host_header:
-        # Extract just the hostname/IP part (remove port)
-        host_part = host_header.split(':')[0]
+        # Extract just the hostname/IP part (remove port if present)
+        # Split by colon, but only remove the last part if it's a number (port)
+        parts = host_header.rsplit(':', 1)
+        if len(parts) == 2:
+            # Check if the last part is a port number
+            try:
+                int(parts[1])
+                # It's a port number, use the hostname part
+                host_part = parts[0]
+            except ValueError:
+                # Not a port number (might be part of hostname), keep the full string
+                host_part = host_header
+        else:
+            host_part = host_header
         
-        # If client is using hostname, return hostname for consistency
-        hostname = get_hostname()
-        if host_part == hostname:
-            return hostname
-            
-        # If client is using specific IP, return that IP
-        interfaces = get_all_network_interfaces()
-        if host_part in interfaces.values():
-            return host_part
+        # Return the full hostname/domain as provided by the client
+        # This preserves full domain names like "msraig-ubuntu-4.guest.corp.microsoft.com"
+        return host_part
     
     # Fallback to best available address
     return get_best_server_address()
