@@ -35,12 +35,53 @@ A comprehensive robotics vision toolkit providing high-performance keypoint trac
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+This project **requires Conda** (Anaconda or Miniconda) for proper environment management.
+
+**If you don't have Conda installed:**
+
 ```bash
-# One-click setup (recommended)
+# Option 1: Use our automated installer (Easiest - Recommended)
+bash scripts/install_conda.sh
+
+# Option 2: Quick command-line installation
+cd /tmp
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+$HOME/miniconda3/bin/conda init
+source ~/.bashrc
+
+# Option 3: Interactive installation
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+# Follow the prompts to customize installation
+```
+
+> **Note**: If you really need to use system Python (not recommended), you can run:
+> ```bash
+> bash setup_all_in_one.sh --skip-conda
+> ```
+> This may cause dependency conflicts and is only for advanced users.
+
+### Installation
+
+The setup script automatically handles everything:
+
+```bash
+# Standard setup (uses Conda - recommended)
 bash setup_all_in_one.sh
 
+# What it does:
+# 1. Checks system requirements (stops if Conda is missing)
+# 2. Initializes Git submodules
+# 3. Creates 'robot_vision' Conda environment with Python 3.8
+# 4. Installs all dependencies
+# 5. Downloads FlowFormer++ models (~2GB)
+# 6. Validates installation by running example
+
 # Activate the environment
-conda activate flowformerpp
+conda activate robot_vision
 
 # Start all services
 python start_services.py
@@ -48,6 +89,33 @@ python start_services.py
 # Access the dashboard
 # Gateway: http://localhost:8000
 # FlowFormer++ Tracking: http://localhost:8001
+```
+
+### Setup Options
+
+```bash
+# View help and usage information
+bash setup_all_in_one.sh --help
+
+# Use system Python instead of Conda (not recommended)
+bash setup_all_in_one.sh --skip-conda
+```
+
+### Validation
+
+The setup automatically validates the installation by running the FlowFormer++ example.
+You can manually re-run validation anytime:
+
+```bash
+# Run validation test
+bash scripts/run_tests.sh
+
+# This will:
+# - Load FlowFormer++ models
+# - Process sample images
+# - Track keypoints with multiple algorithms
+# - Generate visualizations
+# - Take about 10-15 seconds
 ```
 
 ### Python API
@@ -129,35 +197,81 @@ cd robot_vision
 bash setup_all_in_one.sh
 ```
 
-The setup script runs 6 steps sequentially:
-1. Check system requirements
-2. Setup Git submodules
-3. Create Conda environment
-4. Install dependencies
-5. Download models
-6. Run tests
+## 📦 Detailed Setup
 
-**To skip any step**, simply comment it out in `setup_all_in_one.sh`:
+### Setup Script Breakdown
+
+The `setup_all_in_one.sh` script performs these steps:
+
+**Without --skip-conda flag (Recommended - 6 steps):**
+1. **Check system requirements** - Verifies Python, Git, Conda, disk space
+   - **Stops immediately** if Conda is not installed
+   - Provides detailed installation instructions
+2. **Setup Git submodules** - Initializes FlowFormer++, calibration toolkit, labeling tool
+3. **Create Conda environment** - Creates `robot_vision` environment with Python 3.8
+4. **Install dependencies** - Installs all Python packages in isolated environment
+5. **Download models** - Downloads FlowFormer++ checkpoints (~2GB)
+6. **Validate installation** - Runs example to ensure everything works
+
+**With --skip-conda flag (Not Recommended - 5 steps):**
+- Skips step 3 (Conda environment creation)
+- Uses system Python instead
+- May cause dependency conflicts
+
+### Individual Setup Scripts
+
+You can run individual setup steps if needed:
+
 ```bash
-# Step 5: Download models
-# echo ""
-# echo "Step 5/6: Downloading models..."
-# bash "$SCRIPTS_DIR/download_models.sh" download
+# Check requirements only
+bash scripts/check_requirements.sh
+
+# Setup submodules only
+bash scripts/setup_submodules.sh update
+
+# Create/manage Conda environment
+bash scripts/setup_conda.sh create       # Create environment
+bash scripts/setup_conda.sh info         # Show environment info
+bash scripts/setup_conda.sh remove       # Remove environment
+
+# Install dependencies only
+bash scripts/install_dependencies.sh install
+
+# Download models only
+bash scripts/download_models.sh download
+bash scripts/download_models.sh status   # Check model status
+bash scripts/download_models.sh list     # List available models
+
+# Run validation test
+bash scripts/run_tests.sh
 ```
 
-### Option 2: Manual Setup
+### Option 2: Manual Setup (Advanced Users)
+
+If you prefer manual control:
+
 ```bash
-# Clone with submodules
+# 1. Clone with submodules
 git clone --recursive https://github.com/yizhongzhang1989/robot_vision.git
 cd robot_vision
 
-# Install dependencies
+# 2. Create Conda environment
+conda create -n robot_vision python=3.8 -y
+conda activate robot_vision
+
+# 3. Install dependencies
 pip install -r requirements.txt
+pip install -r ThirdParty/FlowFormerPlusPlusServer/requirements.txt
+pip install -r ThirdParty/camera_calibration_toolkit/requirements.txt
 pip install -e .
 
-# Download models
+# 4. Download FlowFormer++ models
 cd ThirdParty/FlowFormerPlusPlusServer
 ./scripts/download_ckpts.sh
+cd ../..
+
+# 5. Validate installation
+python examples/ffpp_keypoint_tracker_example.py
 ```
 
 ## 🌐 Web Services
@@ -166,7 +280,7 @@ cd ThirdParty/FlowFormerPlusPlusServer
 
 ```bash
 # Activate the conda environment
-conda activate flowformerpp
+conda activate robot_vision
 
 # Start all services at once
 python start_services.py
@@ -400,7 +514,16 @@ services:
 
 ## 📝 Recent Updates
 
-### Version 2.0 (Current)
+### Version 2.1 (Current - November 2025)
+- ✅ **Conda enforcement** - Setup requires Conda by default, with clear installation guidance
+- ✅ **Automated Conda installer** - One-command Conda installation with `scripts/install_conda.sh`
+- ✅ **Environment naming** - Changed from `flowformerpp` to `robot_vision` for consistency
+- ✅ **Simplified validation** - Test script now only runs the main example for faster validation
+- ✅ **--skip-conda flag** - Optional system Python support for advanced users
+- ✅ **Improved error messages** - Clear guidance when Conda is missing with installation commands
+- ✅ **Setup script enhancements** - Better argument parsing and step counting
+
+### Version 2.0
 - ✅ Real-time web dashboard with SSE
 - ✅ Simplified setup script (60 lines vs 440)
 - ✅ Configuration-based port management
@@ -416,4 +539,111 @@ services:
 - Bidirectional validation
 - Multiple reference management
 
-## 📄 License
+## � Troubleshooting
+
+### Conda Not Found
+
+If you see "Conda is not installed!" error:
+
+```bash
+# Use our automated installer
+bash scripts/install_conda.sh
+
+# Or install manually
+cd /tmp
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda3
+$HOME/miniconda3/bin/conda init
+source ~/.bashrc
+```
+
+After installation, run the setup again:
+```bash
+bash setup_all_in_one.sh
+```
+
+### Setup Fails at a Specific Step
+
+Run individual scripts to debug:
+
+```bash
+# Check what's failing
+bash scripts/check_requirements.sh
+bash scripts/setup_submodules.sh update
+bash scripts/setup_conda.sh create
+bash scripts/install_dependencies.sh install
+bash scripts/download_models.sh download
+bash scripts/run_tests.sh
+```
+
+### Model Download Issues
+
+If model downloads fail:
+
+```bash
+# Check network connectivity
+ping google.com
+
+# Try downloading models manually
+cd ThirdParty/FlowFormerPlusPlusServer
+./scripts/download_ckpts.sh
+
+# Check model status
+cd ../..
+bash scripts/download_models.sh status
+```
+
+### CUDA/GPU Issues
+
+```bash
+# Check CUDA availability
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# If CUDA not available, tracker will use CPU (slower)
+# To use CPU explicitly:
+tracker = FFPPKeypointTracker(device='cpu')
+```
+
+### Using System Python (Not Recommended)
+
+If you absolutely cannot use Conda:
+
+```bash
+# Run setup with --skip-conda flag
+bash setup_all_in_one.sh --skip-conda
+
+# Note: This may cause dependency conflicts
+# Conda is highly recommended for this project
+```
+
+### Environment Already Exists
+
+If you see "Conda environment 'robot_vision' already exists":
+
+```bash
+# Remove and recreate
+conda env remove -n robot_vision
+bash setup_all_in_one.sh
+
+# Or use existing environment
+conda activate robot_vision
+bash scripts/install_dependencies.sh install
+```
+
+### Validation Test Fails
+
+If the example fails during setup:
+
+```bash
+# Check the error message
+conda activate robot_vision
+python examples/ffpp_keypoint_tracker_example.py
+
+# Common issues:
+# - Missing models: bash scripts/download_models.sh download
+# - GPU memory: Reduce image size or use CPU
+# - Missing dependencies: bash scripts/install_dependencies.sh install
+```
+
+## �📄 License
+

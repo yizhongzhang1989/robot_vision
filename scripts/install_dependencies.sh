@@ -241,8 +241,35 @@ update_dependencies() {
 # Main execution
 main() {
     local action=${1:-install}
-    local skip_conda=${2:-false}
-    local dev_mode=${3:-false}
+    local skip_conda=false
+    local dev_mode=false
+    local component=""
+    
+    # Parse arguments
+    shift  # Remove action
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --skip-conda)
+                skip_conda=true
+                shift
+                ;;
+            --dev)
+                dev_mode=true
+                shift
+                ;;
+            --component)
+                component="$2"
+                shift 2
+                ;;
+            *)
+                # For backward compatibility with positional args
+                if [ -z "$component" ] && [ "$action" = "component" ]; then
+                    component="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
     
     case "$action" in
         "install")
@@ -250,7 +277,6 @@ main() {
             install_dependencies "$skip_conda" "$dev_mode"
             ;;
         "component")
-            local component=$4
             print_banner "Component Dependency Installation"
             install_component_dependencies "$component" "$skip_conda"
             ;;
@@ -268,7 +294,7 @@ main() {
             ;;
         *)
             print_error "Unknown action: $action"
-            echo "Usage: $0 [install|component|info|update|numpy-fix] [skip_conda] [dev_mode] [component_name]"
+            echo "Usage: $0 [install|component|info|update|numpy-fix] [--skip-conda] [--dev] [--component <name>]"
             return 1
             ;;
     esac

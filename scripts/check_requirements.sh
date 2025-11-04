@@ -51,16 +51,57 @@ check_system_requirements() {
     
     print_info "Python version: $python_version ✓"
     
-    # Check conda (optional)
+    # Check conda (REQUIRED by default)
     local skip_conda=${1:-false}
     if [ "$skip_conda" = false ]; then
         if command_exists conda; then
             local conda_version=$(conda --version 2>&1 | grep -oP '\d+\.\d+\.\d+' | head -1)
-            print_info "Conda version: $conda_version ✓"
+            print_success "Conda version: $conda_version ✓"
         else
-            print_warning "Conda is not installed. Will use system Python instead."
-            print_info "Consider installing Miniconda or Anaconda for better environment management."
+            print_error "Conda is not installed!"
+            echo ""
+            print_info "This project REQUIRES Anaconda/Miniconda for proper environment management."
+            print_info "Conda ensures consistent dependencies and avoids conflicts with system packages."
+            echo ""
+            print_step "EASIEST: Use our automated installer (Recommended):"
+            echo ""
+            echo -e "  ${GREEN}bash scripts/install_conda.sh${NC}"
+            echo ""
+            echo "This will automatically download and install Miniconda for you."
+            echo ""
+            print_step "Quick Install (Command Line):"
+            echo ""
+            echo "Or run these commands manually to install Miniconda:"
+            echo ""
+            echo -e "${GREEN}cd /tmp"
+            echo "wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+            echo "bash Miniconda3-latest-Linux-x86_64.sh -b -p \$HOME/miniconda3"
+            echo "\$HOME/miniconda3/bin/conda init"
+            echo -e "cd -${NC}"
+            echo ""
+            echo "Then restart your terminal (or run: source ~/.bashrc) and run this setup again."
+            echo ""
+            print_step "Manual Install (Interactive):"
+            echo ""
+            echo "Option 1: Install Miniconda (Lightweight - ~400MB)"
+            echo "  wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+            echo "  bash Miniconda3-latest-Linux-x86_64.sh"
+            echo "  # Follow prompts, accept license, choose install location"
+            echo ""
+            echo "Option 2: Install Anaconda (Full distribution - ~3GB)"
+            echo "  Visit: https://www.anaconda.com/download"
+            echo ""
+            echo "After installation, restart your terminal and run this setup script again."
+            echo ""
+            print_warning "If you really want to use system Python (NOT RECOMMENDED),"
+            print_warning "run the setup with the --skip-conda flag:"
+            echo "  bash setup_all_in_one.sh --skip-conda"
+            echo ""
+            return 1
         fi
+    else
+        print_warning "Skipping Conda check (--skip-conda flag provided)"
+        print_warning "Using system Python - you may encounter dependency conflicts!"
     fi
     
     # Check available disk space
@@ -85,7 +126,20 @@ check_system_requirements() {
 
 # Main execution
 main() {
-    local skip_conda=${1:-false}
+    local skip_conda=false
+    
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --skip-conda)
+                skip_conda=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
     
     print_banner "System Requirements Check"
     check_system_requirements "$skip_conda"

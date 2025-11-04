@@ -8,7 +8,7 @@
 export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 export PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 export PROJECT_NAME="robot_vision"
-export CONDA_ENV_NAME="flowformerpp"
+export CONDA_ENV_NAME="robot_vision"
 export PYTHON_VERSION="3.8"
 
 # Color definitions for output
