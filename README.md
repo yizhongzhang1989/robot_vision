@@ -75,7 +75,7 @@ bash scripts/run_tests.sh
 
 ### Python API
 
-Direct library integration for best performance (~0.3s per frame with GPU).
+Direct library integration for best performance (~0.3s per frame with RTX 3090).
 
 ```python
 from core.ffpp_keypoint_tracker import FFPPKeypointTracker
@@ -89,7 +89,7 @@ See `examples/ffpp_keypoint_tracker_example.py` for detailed examples.
 
 ### Web API
 
-HTTP REST API for remote access and language flexibility (~0.5s per frame).
+HTTP REST API for remote access and language flexibility (~0.5s per frame with RTX 3090 on the same local network).
 
 **Start the web services:**
 ```bash
