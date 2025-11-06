@@ -64,6 +64,38 @@ create_conda_environment() {
     print_info "To activate: conda activate $CONDA_ENV_NAME"
 }
 
+# Function to install conda packages
+install_conda_packages() {
+    local skip_conda=${1:-false}
+    
+    if [ "$skip_conda" = true ]; then
+        print_info "Skipping conda package installation (--skip-conda flag)"
+        return 0
+    fi
+    
+    if ! command_exists conda; then
+        print_error "Conda is not installed"
+        return 1
+    fi
+    
+    if ! conda_env_exists; then
+        print_error "Conda environment '$CONDA_ENV_NAME' does not exist"
+        print_info "Create it first with: $0 create"
+        return 1
+    fi
+    
+    print_step "Installing conda packages..."
+    
+    # Install packages needed for camera calibration toolkit (nlopt for optimization)
+    print_progress "Installing optimization and scientific packages..."
+    if conda install -n "$CONDA_ENV_NAME" nlopt -y; then
+        print_success "Conda packages installed successfully!"
+    else
+        print_error "Failed to install conda packages"
+        return 1
+    fi
+}
+
 # Function to remove conda environment
 remove_conda_environment() {
     if ! command_exists conda; then
@@ -151,6 +183,10 @@ main() {
             print_banner "Conda Environment Setup"
             create_conda_environment "$skip_conda" "$force_recreate"
             ;;
+        "install-packages")
+            print_banner "Conda Package Installation"
+            install_conda_packages "$skip_conda"
+            ;;
         "remove")
             print_banner "Conda Environment Removal"
             remove_conda_environment
@@ -168,7 +204,7 @@ main() {
             ;;
         *)
             print_error "Unknown action: $action"
-            echo "Usage: $0 [create|remove|info|activate|export] [skip_conda] [force_recreate]"
+            echo "Usage: $0 [create|install-packages|remove|info|activate|export] [skip_conda] [force_recreate]"
             return 1
             ;;
     esac
