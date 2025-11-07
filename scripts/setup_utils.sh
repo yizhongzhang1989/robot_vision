@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Robot Vision Toolkit - Setup Utilities
 # =======================================
 # Common utilities and functions used by setup scripts
@@ -9,7 +7,7 @@ export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 export PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 export PROJECT_NAME="robot_vision"
 export CONDA_ENV_NAME="robot_vision"
-export PYTHON_VERSION="3.8"
+export PYTHON_VERSION="3.10"
 
 # Color definitions for output
 export RED='\033[0;31m'
