@@ -128,6 +128,9 @@ install_pytorch_jetson() {
     local temp_dir=$(mktemp -d)
     local log_file="$PROJECT_ROOT/torchvision_build.log"
     
+    # Reset the log file
+    > "$log_file"
+    
     print_progress "Cloning torchvision repository (logs: $log_file)..."
     cd "$temp_dir"
     
