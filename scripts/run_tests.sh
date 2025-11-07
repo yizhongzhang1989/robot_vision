@@ -18,11 +18,28 @@ run_ffpp_example() {
     local skip_conda=${1:-false}
     
     print_step "Running FlowFormer++ keypoint tracker example..."
-    print_info "This may take a few minutes to load models and process images..."
-    echo ""
     
     local python_cmd=$(get_python_cmd "$skip_conda")
+    
+    # Check if CUDA is available before running the test
+    print_progress "Checking CUDA availability..."
+    if $python_cmd -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+        print_success "CUDA is available ✓"
+        print_info "This may take a few minutes to load models and process images..."
+    else
+        print_warning "CUDA is not available"
+        print_warning "Skipping FlowFormer++ example test (requires CUDA)"
+        print_info "You can manually test later when CUDA is available by running:"
+        print_info "  python examples/ffpp_keypoint_tracker_example.py"
+        return 0
+    fi
+    
+    echo ""
     cd "$PROJECT_ROOT"
+
+    
+    print_info "This may take a few minutes to load models and process images..."
+    echo ""
     
     if [ ! -f "examples/ffpp_keypoint_tracker_example.py" ]; then
         print_error "Example not found: examples/ffpp_keypoint_tracker_example.py"

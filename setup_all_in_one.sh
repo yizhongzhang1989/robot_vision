@@ -62,7 +62,7 @@ echo ""
 if [ "$SKIP_CONDA" = true ]; then
     TOTAL_STEPS=5
 else
-    TOTAL_STEPS=6
+    TOTAL_STEPS=7
 fi
 
 # Step 1: Check system requirements
@@ -79,14 +79,18 @@ if [ "$SKIP_CONDA" = false ]; then
     echo ""
     echo "Step 3/$TOTAL_STEPS: Setting up Conda environment..."
     bash "$SCRIPTS_DIR/setup_conda.sh" create
-    CURRENT_STEP=4
+    
+    echo ""
+    echo "Step 4/$TOTAL_STEPS: Installing PyTorch and torchvision for Jetson..."
+    bash "$SCRIPTS_DIR/setup_conda.sh" install-pytorch
+    CURRENT_STEP=5
 else
     echo ""
     echo "Step 3/$TOTAL_STEPS: Skipping Conda environment setup (--skip-conda flag provided)"
     CURRENT_STEP=3
 fi
 
-# Step 4/3: Install dependencies
+# Step 5/3: Install dependencies
 echo ""
 echo "Step $CURRENT_STEP/$TOTAL_STEPS: Installing dependencies..."
 bash "$SCRIPTS_DIR/install_dependencies.sh" install $SKIP_CONDA_FLAG

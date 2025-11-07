@@ -90,10 +90,14 @@ install_dependencies() {
     print_progress "Upgrading pip..."
     $pip_cmd install --upgrade pip
     
+    # Create a temporary constraints file to prevent numpy upgrade
+    local constraints_file=$(mktemp)
+    echo "numpy<2" > "$constraints_file"
+    
     # Install base requirements
     if [ -f "requirements.txt" ]; then
-        print_progress "Installing base requirements..."
-        $pip_cmd install -r requirements.txt
+        print_progress "Installing base requirements (with numpy<2 constraint)..."
+        $pip_cmd install --constraint "$constraints_file" -r requirements.txt
     else
         print_warning "requirements.txt not found, skipping base requirements"
     fi
@@ -101,8 +105,8 @@ install_dependencies() {
     # Install FlowFormerPlusPlusServer requirements
     local ffpp_req="ThirdParty/FlowFormerPlusPlusServer/requirements.txt"
     if [ -f "$ffpp_req" ]; then
-        print_progress "Installing FlowFormer++ requirements..."
-        $pip_cmd install -r "$ffpp_req"
+        print_progress "Installing FlowFormer++ requirements (with numpy<2 constraint)..."
+        $pip_cmd install --constraint "$constraints_file" -r "$ffpp_req"
     else
         print_warning "FlowFormer++ requirements.txt not found"
     fi
@@ -110,8 +114,8 @@ install_dependencies() {
     # Install camera calibration toolkit requirements
     local calib_req="ThirdParty/camera_calibration_toolkit/requirements.txt"
     if [ -f "$calib_req" ]; then
-        print_progress "Installing camera calibration requirements..."
-        $pip_cmd install -r "$calib_req"
+        print_progress "Installing camera calibration requirements (with numpy<2 constraint)..."
+        $pip_cmd install --constraint "$constraints_file" -r "$calib_req"
     else
         print_info "Camera calibration requirements.txt not found (optional)"
     fi
@@ -119,8 +123,8 @@ install_dependencies() {
     # Install ImageLabelingWeb requirements
     local labeling_req="ThirdParty/ImageLabelingWeb/requirements.txt"
     if [ -f "$labeling_req" ]; then
-        print_progress "Installing image labeling requirements..."
-        $pip_cmd install -r "$labeling_req"
+        print_progress "Installing image labeling requirements (with numpy<2 constraint)..."
+        $pip_cmd install --constraint "$constraints_file" -r "$labeling_req"
     else
         print_info "Image labeling requirements.txt not found (optional)"
     fi
@@ -128,16 +132,19 @@ install_dependencies() {
     # Install development dependencies if requested
     if [ "$dev_mode" = true ]; then
         print_progress "Installing development dependencies..."
-        $pip_cmd install pytest pytest-cov black flake8 jupyter notebook ipykernel
+        $pip_cmd install --constraint "$constraints_file" pytest pytest-cov black flake8 jupyter notebook ipykernel
     fi
     
     # Install current package in development mode
     if [ -f "setup.py" ]; then
         print_progress "Installing robot vision toolkit in development mode..."
-        $pip_cmd install -e .
+        $pip_cmd install --constraint "$constraints_file" -e .
     else
         print_warning "setup.py not found, skipping package installation"
     fi
+    
+    # Clean up constraints file
+    rm -f "$constraints_file"
     
     # Check and fix NumPy compatibility after all packages are installed
     fix_numpy_compatibility "$skip_conda"

@@ -49,8 +49,8 @@ create_conda_environment() {
         fi
     fi
     
-    print_progress "Creating conda environment with Python $PYTHON_VERSION..."
-    conda create -n "$CONDA_ENV_NAME" python="$PYTHON_VERSION" -y
+    print_progress "Creating conda environment with Python $PYTHON_VERSION and numpy<2..."
+    conda create -n "$CONDA_ENV_NAME" python="$PYTHON_VERSION" "numpy<2" -y
     
     # Verify environment was created
     if ! conda_env_exists; then
@@ -62,6 +62,137 @@ create_conda_environment() {
     print_info "Environment name: $CONDA_ENV_NAME"
     print_info "Python version: $PYTHON_VERSION"
     print_info "To activate: conda activate $CONDA_ENV_NAME"
+}
+
+# Function to install PyTorch and torchvision for Jetson
+install_pytorch_jetson() {
+    local skip_conda=${1:-false}
+    
+    if [ "$skip_conda" = true ]; then
+        print_info "Skipping PyTorch Jetson installation (--skip-conda flag)"
+        return 0
+    fi
+    
+    if ! conda_env_exists; then
+        print_error "Conda environment '$CONDA_ENV_NAME' does not exist"
+        return 1
+    fi
+    
+    print_step "Installing PyTorch and torchvision for Jetson..."
+    
+    # Install system dependencies for torchvision 
+    # (checking if already installed to avoid unnecessarily prompting for password)
+    print_progress "Checking system dependencies for torchvision..."
+    local missing_deps=()
+    for pkg in libjpeg-dev libpng-dev libtiff-dev; do
+        if ! dpkg -l | grep -q "^ii  $pkg "; then
+            missing_deps+=("$pkg")
+        fi
+    done
+    
+    if [ ${#missing_deps[@]} -gt 0 ]; then
+        print_info "Need to install system packages: ${missing_deps[*]}"
+        print_warning "This requires sudo access. You may be prompted for your password."
+        if ! sudo apt-get install -y "${missing_deps[@]}"; then
+            print_error "Failed to install system dependencies"
+            return 1
+        fi
+        print_success "System dependencies installed"
+    else
+        print_success "All system dependencies already installed"
+    fi
+    
+    # Upgrade pip and setuptools in conda environment
+    print_progress "Upgrading pip and setuptools..."
+    if ! conda run -n "$CONDA_ENV_NAME" pip install --upgrade pip setuptools 2>&1 | grep -E "(Successfully|Requirement already)" > /dev/null; then
+        print_error "Failed to upgrade pip and setuptools"
+        return 1
+    fi
+    
+    # Ensure numpy<2 is installed before PyTorch
+    print_progress "Ensuring numpy<2 is installed..."
+    if ! conda run -n "$CONDA_ENV_NAME" pip install "numpy<2" 2>&1 | grep -E "(Successfully|Requirement already)" > /dev/null; then
+        print_error "Failed to install numpy<2"
+        return 1
+    fi
+    
+    # Install PyTorch wheel for Jetson
+    print_progress "Installing PyTorch from Jetson wheel..."
+    local torch_wheel_url="https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl"
+    if ! conda run -n "$CONDA_ENV_NAME" pip install "$torch_wheel_url" 2>&1 | grep -E "(Successfully|Requirement already)" > /dev/null; then
+        print_error "Failed to install PyTorch wheel"
+        return 1
+    fi
+    
+    # Clone and build torchvision from source
+    local temp_dir=$(mktemp -d)
+    local log_file="$PROJECT_ROOT/torchvision_build.log"
+    
+    print_progress "Cloning torchvision repository (logs: $log_file)..."
+    cd "$temp_dir"
+    
+    if ! git clone https://github.com/pytorch/vision.git >> "$log_file" 2>&1; then
+        print_error "Failed to clone torchvision repository"
+        print_info "Check log file: $log_file"
+        cd "$PROJECT_ROOT"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    cd vision
+    print_progress "Checking out torchvision v0.20.0..."
+    if ! git checkout tags/v0.20.0 >> "$log_file" 2>&1; then
+        print_error "Failed to checkout v0.20.0"
+        print_info "Check log file: $log_file"
+        cd "$PROJECT_ROOT"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Build and install torchvision with numpy<2 constraint
+    print_progress "Building and installing torchvision (this may take 15+ minutes)..."
+    print_info "Build logs: $log_file"
+    
+    # Create a temporary constraints file
+    local constraints_file=$(mktemp)
+    echo "numpy<2" > "$constraints_file"
+    
+    # Build and install with constraint (setup.py will respect PIP_CONSTRAINT env var)
+    if ! conda run -n "$CONDA_ENV_NAME" bash -c "export PIP_CONSTRAINT='$constraints_file' && python3 setup.py install" >> "$log_file" 2>&1; then
+        print_error "Failed to build and install torchvision"
+        print_info "Check log file: $log_file"
+        cd "$PROJECT_ROOT"
+        rm -rf "$temp_dir"
+        rm -f "$constraints_file"
+        return 1
+    fi
+    print_success "Torchvision build completed!"
+    
+    # Install additional packages with numpy constraint
+    print_progress "Installing Pillow, scipy, and matplotlib..."
+    if ! conda run -n "$CONDA_ENV_NAME" pip install --constraint "$constraints_file" Pillow scipy matplotlib 2>&1 | grep -E "(Successfully|Requirement already)" > /dev/null; then
+        print_error "Failed to install additional packages"
+        cd "$PROJECT_ROOT"
+        rm -rf "$temp_dir"
+        rm -f "$constraints_file"
+        return 1
+    fi
+    
+    # Clean up constraints file
+    rm -f "$constraints_file"
+    
+    # Clean up
+    cd "$PROJECT_ROOT"
+    rm -rf "$temp_dir"
+    
+    # Verify installation
+    print_progress "Verifying PyTorch installation..."
+    if conda run -n "$CONDA_ENV_NAME" python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"; then
+        print_success "PyTorch and torchvision installed successfully!"
+    else
+        print_error "PyTorch verification failed"
+        return 1
+    fi
 }
 
 # Function to install conda packages
@@ -183,6 +314,10 @@ main() {
             print_banner "Conda Environment Setup"
             create_conda_environment "$skip_conda" "$force_recreate"
             ;;
+        "install-pytorch")
+            print_banner "PyTorch Jetson Installation"
+            install_pytorch_jetson "$skip_conda"
+            ;;
         "install-packages")
             print_banner "Conda Package Installation"
             install_conda_packages "$skip_conda"
@@ -204,7 +339,7 @@ main() {
             ;;
         *)
             print_error "Unknown action: $action"
-            echo "Usage: $0 [create|install-packages|remove|info|activate|export] [skip_conda] [force_recreate]"
+            echo "Usage: $0 [create|install-pytorch|install-packages|remove|info|activate|export] [skip_conda] [force_recreate]"
             return 1
             ;;
     esac
