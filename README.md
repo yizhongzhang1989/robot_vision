@@ -17,6 +17,17 @@ A comprehensive robotics vision toolkit providing high-performance keypoint trac
 - **Conda**: Anaconda or Miniconda
 - **Git**: With submodule support
 
+### NVIDIA Jetson Requirements
+If running on an NVIDIA Jetson platform, you must install cuSPARSELt **once per machine** before setting up the environment:
+
+```bash
+bash scripts/install_cusparselt.sh
+```
+
+This script installs cuSPARSELt libraries required for PyTorch on Jetson. It was adapted from the [official NVIDIA PyTorch installation guide](https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/index.html) with modifications to work with CUDA 12.6.
+
+**Note**: This is a one-time system-level installation and only needs to be run once per Jetson device.
+
 ## 🚀 Quick Start
 
 ### Installation
