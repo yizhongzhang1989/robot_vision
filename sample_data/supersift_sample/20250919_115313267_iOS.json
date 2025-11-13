@@ -1,0 +1,76 @@
+{
+    "image": {
+        "width": 1280,
+        "height": 960,
+        "filename": "unknown"
+    },
+    "keypoints": [
+        {
+            "id": 1,
+            "name": "Point 1",
+            "x": 543.131489,
+            "y": 394.372586,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 2,
+            "name": "Point 2",
+            "x": 663.390274,
+            "y": 394.372586,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 3,
+            "name": "Point 3",
+            "x": 663.797241,
+            "y": 448.624748,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 4,
+            "name": "Point 4",
+            "x": 544.555874,
+            "y": 449.640706,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 5,
+            "name": "Point 5",
+            "x": 713.960471,
+            "y": 393.098481,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 6,
+            "name": "Point 6",
+            "x": 833.664556,
+            "y": 392.136865,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 7,
+            "name": "Point 7",
+            "x": 831.377665,
+            "y": 448.655234,
+            "coordinates_type": "original_image_pixels"
+        },
+        {
+            "id": 8,
+            "name": "Point 8",
+            "x": 712.339781,
+            "y": 447.639276,
+            "coordinates_type": "original_image_pixels"
+        }
+    ],
+    "metadata": {
+        "created_at": "2025-10-14T05:32:28.873Z",
+        "tool_version": "2.0.0",
+        "total_keypoints": 8,
+        "features": [
+            "named_keypoints",
+            "drag_drop_support",
+            "mode_switching"
+        ]
+    },
+    "descriptors": "20250919_115313267_iOS.pkl"
+}

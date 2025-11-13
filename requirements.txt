@@ -4,6 +4,8 @@ opencv-python>=4.8.0
 Pillow>=8.0.0
 matplotlib>=3.5.0
 requests>=2.25.0
+transformers
+pybind11[global]
 
 # Web server dependencies
 fastapi>=0.104.0
@@ -14,3 +16,4 @@ flask>=3.0.0
 
 # Additional utilities
 python-json-logger>=2.0.7
+
