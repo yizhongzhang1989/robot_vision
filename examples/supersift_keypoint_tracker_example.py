@@ -87,7 +87,7 @@ def test_basic_tracking():
     # Create output directory
     output_dir = "output/suerpoint_keypoint_tracker_example_output"
     os.makedirs(output_dir, exist_ok=True)
-        
+
     print("\n🎯 Step 2: Tracking keypoints in target image...")
 
     for id, target_img in enumerate(test_images):
@@ -114,13 +114,39 @@ def test_basic_tracking():
 
             # 2. CREATE AND SAVE VISUALIZATION IMAGE
             vis_img = cv2.cvtColor(target_img, cv2.COLOR_RGB2BGR)
+            h, w = vis_img.shape[:2]
+
             for i, kp in enumerate(result["tracked_keypoints"]):
                 x, y = int(round(kp["x"])), int(round(kp["y"]))
-                h, w = vis_img.shape[:2]
+                dev = kp["deviation"]
+                name = kp["name"]
+
+                # use color coding to map dev from green to yellow, if dis < 5.0
+                if dev < 1.0:
+                    color = (0, 255, 0)
+                elif dev < 3.0:
+                    color = (0, 255, 255)
+                else:
+                    color = (0, 0, 255)
 
                 if 0 <= x < w and 0 <= y < h:
-                    cv2.circle(vis_img, (x, y), 3, (0, 255, 0), -1)
-                    cv2.putText(vis_img, str(i + 1), (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                    cv2.drawMarker(vis_img, (x, y), color, markerType=cv2.MARKER_CROSS, markerSize=20, thickness=2)
+                    cv2.putText(vis_img, name, (x + 5, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+            # plot color legend
+            # Draw legend rectangle at top right corner
+            legend_width, legend_height = 240, 70
+            legend_x1, legend_y1 = w - legend_width - 10, 10
+            legend_x2, legend_y2 = w - 10, 10 + legend_height
+            cv2.rectangle(vis_img, (legend_x1, legend_y1), (legend_x2, legend_y2), (50, 50, 5), -1)
+            # Put legend text inside the rectangle
+            cv2.putText(vis_img, "   Dev < 1.0", (legend_x1 + 20, legend_y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.putText(vis_img, "   1.0 <= Dev < 3.0", (legend_x1 + 20, legend_y1 + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            cv2.putText(vis_img, "   Dev >= 3.0", (legend_x1 + 20, legend_y1 + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            # put cross marker left to each text
+            cv2.drawMarker(vis_img, (legend_x1 + 10, legend_y1 + 15), (0, 255, 0), markerType=cv2.MARKER_CROSS, markerSize=15, thickness=2)
+            cv2.drawMarker(vis_img, (legend_x1 + 10, legend_y1 + 35), (0, 255, 255), markerType=cv2.MARKER_CROSS, markerSize=15, thickness=2)
+            cv2.drawMarker(vis_img, (legend_x1 + 10, legend_y1 + 55), (0, 0, 255), markerType=cv2.MARKER_CROSS, markerSize=15, thickness=2)
 
             vis_path = os.path.join(output_dir, f"basic_tracking_visualization_{id}.jpg")
             cv2.imwrite(vis_path, vis_img)

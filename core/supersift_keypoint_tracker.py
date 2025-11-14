@@ -8,11 +8,27 @@ Usage:
     from core.supersift_keypoint_tracker import SuperSiftKeypointTracker
 
     tracker = SuperSiftKeypointTracker()
-    tracker.set_reference_image(ref_image, keypoints)
+
+    # Set reference image(s) with keypoints, the number of reference images should be more than 1
+    tracker.set_reference_image(ref_image1, keypoints1, image_name="ref1")
+    tracker.set_reference_image(ref_image2, keypoints2, image_name="ref2")
+    ...
+
+    #Recommend: you can also load multiple reference images from a folder directly
+    # tracker.load_all_reference_images(reference_image_folder)
+
     result = tracker.track_keypoints(target_image)
-    tracker.remove_reference_image()  # Clean up when finished
+
+    # Clean up when finished (optional)
+    tracker.remove_reference_image("ref1")
+    tracker.remove_reference_image("ref2")
+    ...
+    # or clear all reference images (recommended)
+    tracker.remove_all_reference_images()
+
 
 For examples and test cases, see: examples/supersift_keypoint_tracker_example.py
+
 
 GPU-accelerated SIFT detection is highly recommended. To install pypopsift:
 1. Ensure CUDA and the NCC compiler are installed (PyTorch with CUDA support is usually sufficient).
@@ -28,9 +44,8 @@ GPU-accelerated SIFT detection is highly recommended. To install pypopsift:
 import os
 from typing import Dict, List, Tuple, Optional, Union
 import numpy as np
-import cv2
 import json
-import pickle
+import cv2
 import concurrent.futures
 # from scipy.optimize import minimize
 
@@ -94,7 +109,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
         self.__load_models()
 
         self.thresold_distance = 5.0
-        self.downsample_factor = 4  # downsample factor for LightGlue processing
+        self.downsample_factor = 1  # downsample factor for LightGlue processing
         # Data structures to hold reference images and keypoints, as well as other information
         self.template_color_images = []
         self.template_imagefilelist = []
@@ -222,6 +237,27 @@ class SuperSiftKeypointTracker(KeypointTracker):
         return {"success": True, "tracked_keypoints": tracked_keypoints, "keypoints_count": len(tracked_keypoints), "processing_time": processing_time, "reference_name": "Multiple References"}
 
     # ============================================================================
+    # PUBLIC INTERFACE
+    # ============================================================================
+    def load_all_reference_images(self, image_folder: str):
+        self.__load_templates(image_folder)
+        if len(self.template_imagefilelist) == 0:
+            raise ValueError("No template images found in the specified folder.")
+        self.F_store = self.__compute_template_keypoint_maping()
+        self.template_color_images = [cv2.imread(f) for f in self.template_imagefilelist]
+        self.update_required = False
+
+    # ============================================================================
+    def remove_all_reference_images(self):
+        self.template_color_images = []
+        self.template_imagefilelist = []
+        self.precomputed_data = []
+        self.keypoints_list = []
+        self.keypoints_dict = {}
+        self.F_store = []
+        self.update_required = False
+
+    # ============================================================================
     # Private METHODS
     # ============================================================================
     def __load_models(self):
@@ -250,7 +286,45 @@ class SuperSiftKeypointTracker(KeypointTracker):
             self.model_loaded = True
         except Exception as e:
             print(f"❌ Error loading LightGlue model: {e}")
-            raise e
+            print("Proceeding without LightGlue model functionality. Performance may be degraded.")
+            self.model_loaded = False
+            # raise e
+
+    # ============================================================================
+
+    def __load_templates(self, input_folder):
+        """
+        Load template images and their keypoints from the specified folder.
+        Precompute the neccessary data for each template image.
+        Args:
+            input_folder (str): Path to the folder containing template images and JSON files.
+        """
+
+        if not os.path.exists(input_folder):
+            raise ValueError(f"Input folder {input_folder} does not exist.")
+
+        json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
+        self.template_imagefilelist, self.keypoints_list, self.precomputed_data = [], [], []
+
+        for json_file in json_files:
+            json_path = os.path.join(input_folder, json_file)
+            image_path = json_path.replace(".json", ".jpg")
+            if not os.path.exists(image_path):
+                raise ValueError(f"Image file {image_path} not found for JSON file {json_file}")
+
+            with open(json_path, "r") as f:
+                data = json.load(f)
+            keypoints = data.get("keypoints")
+            if keypoints is None:
+                raise ValueError(f"No keypoints found in JSON file {json_file}")
+            self.keypoints_list.append(keypoints)
+            self.template_imagefilelist.append(image_path)
+
+            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            kp, des = self.__detect_and_compute(img)
+            self.precomputed_data.append((kp, des))
+
+        self.__update_keypoints_dict()
 
     # ============================================================================
     def __update_keypoints_dict(self):
@@ -574,25 +648,32 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __find_point_correspondence(self, gray_test_image, color_test_image, method="superpoint"):
+    def __find_point_correspondence(self, gray_test_image, color_test_image):
         """
         Find marked point correspondences between the test image (gray) and reference images.
         Args:
             gray_test_image (np.ndarray): Test image in OpenCV format (gray).
-            color_test_image (np.ndarray): Color test image in OpenCV format (RGB).
-            method (str): Method to compute fundamental matrices ('superpoint', 'cross_check', 'direct').
+            color_test_image (np.ndarray): Color test image in RGB format.
         Returns:
             estimated_positions (dict): Estimated positions of marked points in the test image.
         """
         estimated_positions = {}
 
         test_kp, test_des = self.__detect_and_compute(gray_test_image)
-        if method == "direct":
+
+        method = "superpoint"
+        if self.model_loaded is False and method == "superpoint":
+            method = "cross_check"
+
+        try:
+            if method == "cross_check":
+                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_cross_check(test_kp, test_des)
+            else:  # default to superpoint method
+                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_superpoint(color_test_image, test_kp, test_des)
+        except Exception as e:
+            print(f"Error computing fundamental matrices: {e}")
+            print("Falling back to direct computation method.")
             F_dict, Ratio_dict = self.__compute_findamental_matrices_directly(test_kp, test_des)
-        elif method == "cross_check":
-            F_dict, Ratio_dict = self.__compute_findamental_matrices_via_cross_check(test_kp, test_des)
-        else:  # default to superpoint method
-            F_dict, Ratio_dict = self.__compute_findamental_matrices_via_superpoint(color_test_image, test_kp, test_des)
 
         for name, entries in self.keypoints_dict.items():
             if len(entries["info"]) < 2:
@@ -616,7 +697,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
             iteration = 5  # number of iterations for nonlinear quadratic minimization, should be enough
             prev_loss = float("inf")
-            px, py = 0, 0 # initial guess, does not matter
+            px, py = 0, 0  # initial guess, does not matter
             for it in range(iteration):
                 px2_coeff = py2_coeff = pxpy_coeff = px_coeff = py_coeff = constant_term = 0
                 for entry in entries["info"]:
