@@ -240,6 +240,11 @@ class SuperSiftKeypointTracker(KeypointTracker):
     # PUBLIC INTERFACE
     # ============================================================================
     def load_all_reference_images(self, image_folder: str):
+        """
+        Load all reference images and their keypoints from the specified folder.
+        Args:
+            image_folder (str): Path to the folder containing template images and JSON files.
+        """
         self.__load_templates(image_folder)
         if len(self.template_imagefilelist) == 0:
             raise ValueError("No template images found in the specified folder.")
@@ -249,6 +254,9 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
     def remove_all_reference_images(self):
+        """
+        Remove all stored reference images and associated data.
+        """
         self.template_color_images = []
         self.template_imagefilelist = []
         self.precomputed_data = []
@@ -581,6 +589,15 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
     def __compute_findamental_matrices_via_cross_check(self, test_kp, test_des):
+        """
+        Compute fundamental matrices between the test image and each reference image using sift feature matching and epipolar constraints.
+        Args:
+            test_kp (np.ndarray): Keypoints from the test image.
+            test_des (np.ndarray): Descriptors from the test image.
+        Returns:
+            F_dict (dict): Dictionary of fundamental matrices for each reference image.
+            Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
+        """
         test_keypoints_map_list = []
         test_keypoint_map = []
         for idx, (template_kp, template_des) in enumerate(self.precomputed_data):
@@ -597,6 +614,17 @@ class SuperSiftKeypointTracker(KeypointTracker):
     # ============================================================================
 
     def __compute_findamental_matrices_directly(self, test_kp, test_des):
+        """
+        Compute fundamental matrices between the test image and each reference image directly using sift feature matching.
+        Args:
+            test_kp (np.ndarray): Keypoints from the test image.
+            test_des (np.ndarray): Descriptors
+            test image.
+        Returns:
+            F_dict (dict): Dictionary of fundamental matrices for each reference image.
+            Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
+        """
+
         # Parallelize the computation of fundamental matrices
         def compute_F_for_template(args):
             idx, (template_kp, template_des), test_kp, test_des = args
