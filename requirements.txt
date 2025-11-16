@@ -4,8 +4,8 @@ opencv-python>=4.8.0
 Pillow>=8.0.0
 matplotlib>=3.5.0
 requests>=2.25.0
-transformers
 pybind11[global]
+-e git+https://github.com/cvg/LightGlue@main#egg=LightGlue
 
 # Web server dependencies
 fastapi>=0.104.0
