@@ -1,45 +1,91 @@
-"""
-SuperSift Keypoint Tracker Module
-=================================
-An experimental keypoint tracking module that combines SIFT and SuperPoint features to enhance keypoint tracking performance.
-By leveraging the strengths of both algorithms and incorporating epipolar geometry constraints, this module delivers robust tracking across multiple reference images (requires >1 reference image).
-
-Usage:
-    from core.supersift_keypoint_tracker import SuperSiftKeypointTracker
-
-    tracker = SuperSiftKeypointTracker()
-
-    # Set reference image(s) with keypoints, the number of reference images should be more than 1
-    tracker.set_reference_image(ref_image1, keypoints1, image_name="ref1")
-    tracker.set_reference_image(ref_image2, keypoints2, image_name="ref2")
-    ...
-
-    #Recommend: you can also load multiple reference images from a folder directly
-    # tracker.load_all_reference_images(reference_image_folder)
-
-    result = tracker.track_keypoints(target_image)
-
-    # Clean up when finished (optional)
-    tracker.remove_reference_image("ref1")
-    tracker.remove_reference_image("ref2")
-    ...
-    # or clear all reference images (recommended)
-    tracker.remove_all_reference_images()
-
-
-For examples and test cases, see: examples/supersift_keypoint_tracker_example.py
-
-
-GPU-accelerated SIFT detection is highly recommended. To install pypopsift:
-1. Ensure CUDA and the NCC compiler are installed (PyTorch with CUDA support is usually sufficient).
-2. Install CMake (version >= 3.24). On Ubuntu: sudo snap install cmake --classic
-3. Install pybind11: pip install pybind11[global]
-4. Clone the repository: git clone https://github.com/OpenDroneMap/pypopsift
-5. Build pypopsift:
-    cd pypopsift && mkdir build && cd build && cmake .. && make -j8
-6. Install the package:
-    cd .. && pip install ..
-"""
+# =============================================================================
+# SuperSift Keypoint Tracker Module
+# =============================================================================
+# An experimental keypoint tracking module that combines SIFT and SuperPoint features
+# to enhance keypoint tracking performance. By leveraging the strengths of both algorithms
+# and incorporating epipolar geometry constraints, this module delivers robust tracking
+# across multiple reference images (requires >1 reference images).
+#
+# Usage:
+#     from core.supersift_keypoint_tracker import SuperSiftKeypointTracker
+#
+#     tracker = SuperSiftKeypointTracker()
+#
+#     # Set reference image(s) with keypoints, the number of reference images should be more than 1
+#     tracker.set_reference_image(ref_image1, keypoints1, image_name="ref1")
+#     tracker.set_reference_image(ref_image2, keypoints2, image_name="ref2")
+#     ...
+#
+#     # Recommend: you can also load multiple reference images from a folder directly
+#     # tracker.load_all_reference_images(reference_image_folder)
+#
+#     result = tracker.track_keypoints(target_image)
+#
+#     # Clean up when finished (optional)
+#     tracker.remove_reference_image("ref1")
+#     tracker.remove_reference_image("ref2")
+#     ...
+#     # or clear all reference images (recommended)
+#     tracker.remove_all_reference_images()
+#
+# For examples and test cases, see: examples/supersift_keypoint_tracker_example.py
+#
+# GPU-accelerated SIFT detection is highly recommended. To install pypopsift:
+# 1. Ensure CUDA and the NCC compiler are installed (PyTorch with CUDA support is usually sufficient).
+# 2. Install CMake (version >= 3.24). On Ubuntu: sudo snap install cmake --classic
+# 3. Install pybind11: pip install pybind11[global]
+# 4. Clone the repository: git clone https://github.com/OpenDroneMap/pypopsift
+# 5. Build pypopsift:
+#     cd pypopsift && mkdir build && cd build && cmake .. && make -j8
+# 6. Install the package:
+#     cd .. && pip install ..
+#
+# =============================================================================
+#
+# Algorithm description --- Yang Liu, Nov. 2025
+#
+# 1. Reference Image Setup
+#    - Start with a set of reference images (typically more than one; three is common).
+#    - These images share overlapping annotated points, most of them appear in multiple reference images.
+#    - Assume there are enough annotated keypoints to compute the fundamental matrix for each adjacent pair of reference images.
+#    - Let the reference images be denoted as: \(I_0, I_1, ..., I_{N-1}\)
+#    - Their corresponding fundamental matrices: \(F_{0->1}, F_{1->2}, ..., F_{N-1->0}\)
+#    - For simplicity, only consider these adjacent pairs and avoid other combinations.
+#
+# 2. Matching Keypoints Between Target and Reference Images
+#    - For a given target image:
+#      - Compute keypoint matches with each reference image using:
+#        - SuperPoint + LightGlue
+#        - SIFT + FLANN
+#      - Filter these matches using epipolar geometry constraints derived from the fundamental matrices computed in Step 1.
+#    - Filtering process:
+#      - Consider two matches:
+#        - (X_t, X_r): match between target image and reference image I_r
+#        - (X_t, X_{r+1}): match between target image and reference image I_{r+1}
+#      - Compute:
+#        - Distance from X_r to the epipolar line defined by F_{r->r+1} and X_{r+1}
+#      - If the distance is below a threshold, keep the match.
+#      - Repeat for the pair (X_t, X_{r-1}).
+#    - This step removes outliers and improves matching accuracy.
+#
+# 3. Compute Fundamental Matrices for Target-Reference Pairs
+#    - Using the filtered matches from Step 2, compute the fundamental matrices between the target image and each reference image: F_{t->i}.
+#
+# 4. Estimate Keypoint Positions in Target Image
+#    - For each common keypoint:
+#      - Estimate its position in the target image using:
+#        - Fundamental matrices from Step 3
+#        - Epipolar constraints
+#      - The estimation is achieved by solving a minimization problem:
+#        - Let X_t be the unknown, and its corresponding positions in reference images be Y_0, Y_2, ..., Y_{N-1}.
+#        - Minimize the sum of squared epipolar distances:
+#          - Distance from Y_i to the epipolar line defined by F_{t->r_i} and X_t
+#          - Distance from X_t to the epipolar line defined by F^T_{t->r_i} and Y_i
+#      - This approach provides:
+#        - A robust estimate of keypoint positions in the target image
+#        - A confidence score based on the distance loss
+#
+# =============================================================================
 
 import os
 from typing import Dict, List, Tuple, Optional, Union
@@ -77,14 +123,14 @@ import torch
 
 # ============================================================================
 class ImageFeature:
-    def __init__(self, siftfeature=None, superpointfeature=None, width=0, height=0, imagename="", keypoints_list=None):
+    def __init__(self, siftfeature=None, superpointfeature=None, width=0, height=0, imagename="", keypoints=None):
         self.data = {
             "sift": siftfeature,  # SIFT features
             "superpoint": superpointfeature,  # SuperPoint features
             "width": width,  # image dimensions
             "height": height,  # image dimensions
             "name": imagename,  # image file name
-            "keypoints": keypoints_list if keypoints_list is not None else [],  # list of keypoint dicts
+            "keypoints": keypoints if keypoints is not None else [],  # list of keypoint dicts
         }
 
     def get(self, key):
@@ -143,6 +189,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
             self.ransac_reproj_threshold = kwargs["ransac_threshold"]
         self.thresold_distance = 5.0  # Epipolar distance threshold for filtering matches
         self.ransac_threshold = 0.618  # RANSAC reprojection threshold
+        self.filter_factor = 0.6  # Filtering factor for sift matches
 
         # Data structures to hold reference images and keypoints, as well as other information
         self.template_image_data = []  # list of ImageFeature objects for each reference image
@@ -173,7 +220,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
         self.template_image_data.append(
             self.__create_image_data(
                 color_image=image,  #
-                keypoints_list=keypoints,  #
+                keypoints=keypoints,  #
                 image_name=image_name if image_name is not None else f"template_{len(self.template_image_data)}",  #
                 color_order="RGB",  #
             )  #
@@ -304,6 +351,11 @@ class SuperSiftKeypointTracker(KeypointTracker):
         try:
             self.superpoint_extractor = SuperPoint(max_num_keypoints=1024).eval().to(self.device)
             self.superpoint_matcher = LightGlue(features="superpoint").eval().to(self.device)
+            # create a dummy run to load the model onto GPU
+            dummy_image = torch.rand(1, 3, 240, 320).to(self.device)
+            with torch.inference_mode():
+                dummy_features = self.superpoint_extractor({"image": dummy_image})
+                _ = self.superpoint_matcher({"image0": dummy_features, "image1": dummy_features})
             self.model_loaded = True
         except Exception as e:
             print(f"❌ Error loading LightGlue model: {e}")
@@ -312,13 +364,13 @@ class SuperSiftKeypointTracker(KeypointTracker):
             # raise e
 
     # ============================================================================
-    def __create_image_data(self, color_image: np.ndarray, gray_image: Optional[np.ndarray] = None, keypoints_list=None, image_name="", color_order="RGB"):
+    def __create_image_data(self, color_image: np.ndarray, gray_image: Optional[np.ndarray] = None, keypoints=None, image_name="", color_order="RGB"):
         """
         Create ImageFeature object from image
         Args:
             color_image (np.ndarray): Color image in RGB or BGR format. (H, W, 3)
             gray_image (np.ndarray, optional): Grayscale version of the image. If None, it will be computed.
-            keypoints_list (list, optional): List of keypoint dictionaries.
+            keypoints (list, optional): List of keypoint dictionaries.
             image_name (str, optional): Name of the image.
             color_order (str): Color order of the input color_image ("RGB" or "BGR").
         """
@@ -326,14 +378,15 @@ class SuperSiftKeypointTracker(KeypointTracker):
             gray_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2GRAY) if color_order == "RGB" else cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
         sift_kp, sift_des = self.__detect_and_compute(gray_image)
         torch_image = self.__convert2tensor(color_image, order=color_order)
-        superpoint_feat = self.superpoint_extractor({"image": torch_image}) if self.model_loaded else None
+        with torch.inference_mode():
+            superpoint_feat = self.superpoint_extractor({"image": torch_image}) if self.model_loaded else None
         return ImageFeature(  #
             siftfeature=(sift_kp, sift_des),  #
             superpointfeature=superpoint_feat,  #
             width=color_image.shape[1],  #
             height=color_image.shape[0],  #
             imagename=image_name,  #
-            keypoints_list=keypoints_list,
+            keypoints=keypoints,
         )  #
 
     # ============================================================================
@@ -378,7 +431,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
                 self.__create_image_data(
                     color_image=cv2.imread(image_path, cv2.IMREAD_COLOR),  #
                     gray_image=cv2.imread(image_path, cv2.IMREAD_GRAYSCALE),  #
-                    keypoints_list=keypoints,  #
+                    keypoints=keypoints,  #
                     image_name=os.path.basename(image_path),  #
                     color_order="BGR",
                 )  #
@@ -448,7 +501,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
         matches = matcher.knnMatch(image0_data.get("sift")[1], image1_data.get("sift")[1], k=2)
         good_matches = []
         for m, n in matches:
-            if m.distance < 0.6 * n.distance:
+            if m.distance < self.filter_factor * n.distance:
                 good_matches.append(m)
 
         return good_matches
@@ -610,7 +663,8 @@ class SuperSiftKeypointTracker(KeypointTracker):
         test_keypoints_map_list = []
 
         for id in range(len(self.template_image_data)):
-            matches01 = self.superpoint_matcher({"image0": test_image_data.get("superpoint"), "image1": self.template_image_data[id].get("superpoint")})
+            with torch.inference_mode():
+                matches01 = self.superpoint_matcher({"image0": test_image_data.get("superpoint"), "image1": self.template_image_data[id].get("superpoint")})
             feats0, feats1, matches01 = [rbd(x) for x in [test_image_data.get("superpoint"), self.template_image_data[id].get("superpoint"), matches01]]  # remove batch dimension
             matches = matches01["matches"]  # indices with shape (K,2)
             sp_keypoint0 = feats0["keypoints"][matches[..., 0]].cpu().numpy()  # coordinates in image #0, shape (K,2)
