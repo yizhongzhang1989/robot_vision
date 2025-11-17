@@ -456,14 +456,23 @@ def run_triangulation_with_undistorted_points(view_data, visualize=False):
             }
             
             mixed_view_data.append(scaled_view)
+        elif idx == 2:
+            # For view 2, append 3 zeros to distortion coefficients (8-parameter model)
+            modified_view = view.copy()
+            distortion = np.array(view['distortion'], dtype=np.float64)
+            # Append 3 zeros to simulate 8-parameter distortion model
+            distortion_8param = np.append(distortion, [0.0, 0.0, 0.0])
+            modified_view['distortion'] = distortion_8param
+            mixed_view_data.append(modified_view)
         else:
             # Keep other views unchanged
             mixed_view_data.append(view)
     
-    print(f"[+] Modified view data:")
-    print(f"   - View 0: pre-undistorted (no distortion key)")
-    print(f"   - View 1: pre-undistorted + resized to half (no distortion key)")
-    print(f"   - Views 2-{len(view_data)-1}: standard with distortion model")
+    print("[+] Modified view data:")
+    print("   - View 0: pre-undistorted (no distortion key)")
+    print("   - View 1: pre-undistorted + resized to half (no distortion key)")
+    print("   - View 2: 8-parameter distortion model (original + 3 zeros)")
+    print(f"   - Views 3-{len(view_data)-1}: standard with distortion model")
     
     # Triangulate with mixed view data
     try:
@@ -499,6 +508,8 @@ def run_triangulation_with_undistorted_points(view_data, visualize=False):
             view_type = "(pre-undistorted)"
         elif view_idx == 1:
             view_type = "(pre-undistorted + half size)"
+        elif view_idx == 2:
+            view_type = "(8-parameter distortion)"
         else:
             view_type = "(with distortion)"
         print(f"     View {view_idx} {view_type}: "
