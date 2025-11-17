@@ -15,11 +15,23 @@ Date: November 2025
 """
 
 import sys
+import os
 import glob
 import json
 from pathlib import Path
 import numpy as np
 import cv2
+
+# Fix Windows console encoding issues for emoji/Unicode characters
+if sys.platform == 'win32':
+    try:
+        # Set console output encoding to UTF-8
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass  # Ignore if reconfigure not available
 
 # Add parent directory to path to import the triangulation module
 parent_dir = Path(__file__).parent.parent
@@ -101,7 +113,11 @@ def load_chessboard_test_data():
             config_data = json.load(f)
         pattern = load_pattern_from_json(config_data)
     except Exception as e:
-        print(f"Failed to load pattern configuration: {str(e).encode('ascii', 'replace').decode('ascii')}")
+        try:
+            error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        except Exception:
+            error_msg = "Unknown error (encoding issue)"
+        print(f"Failed to load pattern configuration: {error_msg}")
         return None
     
     # Create calibrator and calibrate
@@ -345,7 +361,160 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     }
 
 
-
+def run_triangulation_with_undistorted_points(view_data, visualize=False):
+    """
+    Run triangulation with first view using pre-undistorted 2D points (no distortion key).
+    
+    This function demonstrates triangulation workflow where the first view has pre-undistorted
+    points without distortion coefficients, while other views use standard distortion model.
+    
+    Workflow:
+    1. Undistort 2D points for the first view only
+    2. Create modified view data where first view has no 'distortion' key
+    3. Other views remain unchanged with original distortion
+    4. Triangulate using the mixed view data
+    
+    Args:
+        view_data: List of view dicts from load_chessboard_test_data()
+        visualize: If True, display 3D visualization of triangulated points and cameras
+    
+    Returns:
+        Dict containing test results
+    """
+    print("\n" + "=" * 80)
+    print("Triangulation Test (First View Pre-undistorted)")
+    print("=" * 80)
+    
+    # Create modified view data with first two views undistorted
+    mixed_view_data = []
+    
+    for idx, view in enumerate(view_data):
+        if idx == 0:
+            # Undistort first view
+            points_2d = np.array(view['points_2d'], dtype=np.float32)
+            intrinsic = np.array(view['intrinsic'], dtype=np.float64)
+            distortion = np.array(view['distortion'], dtype=np.float64)
+            
+            # Undistort points
+            points_reshaped = points_2d.reshape(-1, 1, 2)
+            undistorted_points = cv2.undistortPoints(
+                points_reshaped,
+                intrinsic,
+                distortion,
+                P=intrinsic
+            )
+            undistorted_2d = undistorted_points.reshape(-1, 2)
+            
+            # Create view without distortion key
+            undistorted_view = {
+                'points_2d': undistorted_2d,
+                'image_size': view['image_size'],
+                'intrinsic': intrinsic,
+                # No 'distortion' key - indicates pre-undistorted points
+                'extrinsic': view['extrinsic']
+            }
+            
+            mixed_view_data.append(undistorted_view)
+        elif idx == 1:
+            # Undistort second view and resize to half
+            points_2d = np.array(view['points_2d'], dtype=np.float32)
+            intrinsic = np.array(view['intrinsic'], dtype=np.float64)
+            distortion = np.array(view['distortion'], dtype=np.float64)
+            
+            # Undistort points
+            points_reshaped = points_2d.reshape(-1, 1, 2)
+            undistorted_points = cv2.undistortPoints(
+                points_reshaped,
+                intrinsic,
+                distortion,
+                P=intrinsic
+            )
+            undistorted_2d = undistorted_points.reshape(-1, 2)
+            
+            # Scale points to half resolution
+            scale_factor = 0.5
+            scaled_points = undistorted_2d * scale_factor
+            
+            # Scale intrinsic matrix
+            scaled_intrinsic = intrinsic.copy()
+            scaled_intrinsic[0, 0] *= scale_factor  # fx
+            scaled_intrinsic[1, 1] *= scale_factor  # fy
+            scaled_intrinsic[0, 2] *= scale_factor  # cx
+            scaled_intrinsic[1, 2] *= scale_factor  # cy
+            
+            # Scale image size
+            original_width, original_height = view['image_size']
+            scaled_image_size = (int(original_width * scale_factor), int(original_height * scale_factor))
+            
+            # Create view without distortion key and with scaled parameters
+            scaled_view = {
+                'points_2d': scaled_points,
+                'image_size': scaled_image_size,
+                'intrinsic': scaled_intrinsic,
+                # No 'distortion' key - indicates pre-undistorted points
+                'extrinsic': view['extrinsic']
+            }
+            
+            mixed_view_data.append(scaled_view)
+        else:
+            # Keep other views unchanged
+            mixed_view_data.append(view)
+    
+    print(f"[+] Modified view data:")
+    print(f"   - View 0: pre-undistorted (no distortion key)")
+    print(f"   - View 1: pre-undistorted + resized to half (no distortion key)")
+    print(f"   - Views 2-{len(view_data)-1}: standard with distortion model")
+    
+    # Triangulate with mixed view data
+    try:
+        result = triangulate_multiview(mixed_view_data)
+    except Exception as e:
+        error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        print(f"[-] Exception in triangulate_multiview(): {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return {'error': error_msg}
+    
+    if not result['success']:
+        print(f"[-] Triangulation failed: {result.get('error_message', 'Unknown error')}")
+        return {'error': result.get('error_message', 'Unknown error')}
+    
+    points_3d = result['points_3d']
+    reprojection_errors = result['reprojection_errors']
+    
+    num_points = len(points_3d)
+    num_views = len(mixed_view_data)
+    
+    # Calculate mean reprojection error across all views
+    all_errors = np.concatenate(reprojection_errors)
+    mean_reprojection_error = float(np.mean(all_errors))
+    
+    print(f"[+] Triangulated {num_points} 3D points from {num_views} views")
+    print(f"   Mean reprojection error: {mean_reprojection_error:.3f} pixels")
+    
+    # Print per-view errors
+    print("\n   Per-view reprojection errors:")
+    for view_idx, errors in enumerate(reprojection_errors):
+        if view_idx == 0:
+            view_type = "(pre-undistorted)"
+        elif view_idx == 1:
+            view_type = "(pre-undistorted + half size)"
+        else:
+            view_type = "(with distortion)"
+        print(f"     View {view_idx} {view_type}: "
+              f"mean={np.mean(errors):.3f}px, "
+              f"max={np.max(errors):.3f}px, "
+              f"std={np.std(errors):.3f}px")
+    
+    if visualize:
+        visualize_triangulation_3d(mixed_view_data, result)
+    
+    return {
+        'num_points': num_points,
+        'num_views': num_views,
+        'mean_reprojection_error': mean_reprojection_error,
+        'points_3d': points_3d
+    }
 
 
 def main():
@@ -391,26 +560,51 @@ def main():
     print(f"   - {len(view_data[0]['points_2d'])} points per view")
     print(f"   - Image size: {view_data[0]['image_size']}")
     
-    # Run triangulation example
+    # Run triangulation examples
     try:
         print("\n" + "=" * 80)
-        print("Running Triangulation Example")
+        print("Running Triangulation Examples")
         print("=" * 80)
         
+        # Test 1: Standard triangulation with distortion model
         example_result = run_triangulation_example_with_data(
             view_data=view_data,
             visualize=args.visualize
         )
         
         if 'error' in example_result:
-            print(f"\n[!] Example completed with issues: {example_result['error']}")
-            sys.exit(1)
+            print(f"\n[!] Test 1 completed with issues: {example_result['error']}")
+        else:
+            print("\n[+] Test 1 completed successfully!")
+            print("\nTest 1 Results:")
+            print(f"  - Triangulated {example_result['num_points']} 3D points")
+            print(f"  - Used {example_result['num_views']} camera views")
+            print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
         
-        print("\n[+] Example completed successfully!")
-        print("\nKey Results:")
-        print(f"  - Triangulated {example_result['num_points']} 3D points")
-        print(f"  - Used {example_result['num_views']} camera views")
-        print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
+        # Test 2: Triangulation with pre-undistorted points (no distortion model)
+        undistorted_result = run_triangulation_with_undistorted_points(
+            view_data=view_data,
+            visualize=args.visualize
+        )
+        
+        if 'error' in undistorted_result:
+            print(f"\n[!] Test 2 completed with issues: {undistorted_result['error']}")
+        else:
+            print("\n[+] Test 2 completed successfully!")
+            print("\nTest 2 Results:")
+            print(f"  - Triangulated {undistorted_result['num_points']} 3D points")
+            print(f"  - Used {undistorted_result['num_views']} camera views")
+            print(f"  - Reprojection error: {undistorted_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Summary
+        if 'error' not in example_result and 'error' not in undistorted_result:
+            print("\n" + "=" * 80)
+            print("COMPARISON SUMMARY")
+            print("=" * 80)
+            print(f"\nTest 1 (with distortion model):     {example_result['mean_reprojection_error']:.3f} px")
+            print(f"Test 2 (pre-undistorted, no model):  {undistorted_result['mean_reprojection_error']:.3f} px")
+            print(f"Difference:                          {abs(example_result['mean_reprojection_error'] - undistorted_result['mean_reprojection_error']):.3f} px")
+        
         sys.exit(0)
     except Exception as e:
         print(f"\n[-] Example failed with exception: {str(e).encode('ascii', 'replace').decode('ascii')}")

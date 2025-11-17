@@ -8,7 +8,6 @@ Author: Yizhong Zhang
 Date: November 2025
 """
 
-import sys
 import numpy as np
 import cv2
 from typing import List, Dict
@@ -104,7 +103,8 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             }
         
         # Validate each view has required fields
-        required_fields = ['points_2d', 'image_size', 'intrinsic', 'distortion', 'extrinsic']
+        # Note: 'distortion' is optional - if missing, points are assumed to be pre-undistorted
+        required_fields = ['points_2d', 'image_size', 'intrinsic', 'extrinsic']
         for i, view in enumerate(view_data):
             for field in required_fields:
                 if field not in view:
@@ -142,24 +142,31 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         for i, view in enumerate(view_data):
             points_2d = np.array(view['points_2d'], dtype=np.float32)
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
-            distortion = np.array(view['distortion'], dtype=np.float64)
             
-            # Reshape for cv2.undistortPoints
-            points_reshaped = points_2d.reshape(-1, 1, 2)
-            
-            # Undistort points and normalize to camera coordinates
-            # Then project back to pixel coordinates using intrinsic matrix
-            undistorted = cv2.undistortPoints(
-                points_reshaped,
-                intrinsic,
-                distortion,
-                P=intrinsic
-            )
-            
-            undistorted_2d = undistorted.reshape(-1, 2)
-            undistorted_points.append(undistorted_2d)
-            
-            logger.debug(f"View {i}: Undistorted {len(undistorted_2d)} points")
+            # Check if distortion is provided
+            if 'distortion' in view:
+                distortion = np.array(view['distortion'], dtype=np.float64)
+                
+                # Reshape for cv2.undistortPoints
+                points_reshaped = points_2d.reshape(-1, 1, 2)
+                
+                # Undistort points and normalize to camera coordinates
+                # Then project back to pixel coordinates using intrinsic matrix
+                undistorted = cv2.undistortPoints(
+                    points_reshaped,
+                    intrinsic,
+                    distortion,
+                    P=intrinsic
+                )
+                
+                undistorted_2d = undistorted.reshape(-1, 2)
+                undistorted_points.append(undistorted_2d)
+                
+                logger.debug(f"View {i}: Undistorted {len(undistorted_2d)} points")
+            else:
+                # Points are already undistorted
+                undistorted_points.append(points_2d)
+                logger.debug(f"View {i}: Using pre-undistorted {len(points_2d)} points")
         
         # ========================================
         # PREPARE PROJECTION MATRICES
@@ -172,16 +179,20 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
             extrinsic = np.array(view['extrinsic'], dtype=np.float64)
             
-            # Extract rotation and translation from extrinsic matrix
-            R = extrinsic[:3, :3]
-            t = extrinsic[:3, 3]
-            
-            # Create [R|t] matrix
-            RT = np.hstack([R, t.reshape(-1, 1)])
-            
-            # Projection matrix P = K * [R|t]
-            P = intrinsic @ RT
-            projection_matrices.append(P)
+            try:
+                # Extract rotation and translation from extrinsic matrix
+                R = extrinsic[:3, :3]
+                t = extrinsic[:3, 3]
+                
+                # Create [R|t] matrix
+                RT = np.hstack([R, t.reshape(-1, 1)])
+                
+                # Projection matrix P = K * [R|t]
+                P = intrinsic @ RT
+                projection_matrices.append(P)
+            except Exception as e:
+                logger.error(f"Error preparing projection matrix for view {i}: {e}")
+                raise
             
             # Calculate camera center in world coordinates
             # Camera center: C = -R^T * t
@@ -217,9 +228,15 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         
         for view_idx, view in enumerate(view_data):
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
-            distortion = np.array(view['distortion'], dtype=np.float64)
             extrinsic = np.array(view['extrinsic'], dtype=np.float64)
             original_points_2d = np.array(view['points_2d'], dtype=np.float32)
+            
+            # Check if distortion is provided
+            if 'distortion' in view:
+                distortion = np.array(view['distortion'], dtype=np.float64)
+            else:
+                # No distortion - use zero distortion coefficients
+                distortion = np.zeros(5, dtype=np.float64)
             
             # Project 3D points back to 2D
             R = extrinsic[:3, :3]
@@ -256,10 +273,16 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         return result
         
     except Exception as e:
-        logger.error(f"Triangulation failed: {str(e)}")
+        # Sanitize error message for Windows console encoding issues
+        try:
+            error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        except Exception:
+            error_msg = "Unknown error (encoding issue)"
+        
+        logger.error(f"Triangulation failed: {error_msg}")
         return {
             'success': False,
-            'error_message': str(e),
+            'error_message': error_msg,
             'num_views': len(view_data) if view_data else 0
         }
 
