@@ -28,13 +28,15 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
     
     Args:
         view_data: List of view dictionaries. Each view should contain:
-            - 'points_2d': np.ndarray of shape (N, 2) - 2D pixel coordinates
+            - 'points_2d': np.ndarray of shape (N, 2) - 2D pixel coordinates (x, y)
+                          in OpenCV convention where top-left pixel center is at (0, 0)
             - 'image_size': tuple (width, height) - Image dimensions in pixels
             - 'intrinsic': np.ndarray of shape (3, 3) - Camera intrinsic matrix (K)
                           [[fx, 0, cx],
                            [0, fy, cy],
                            [0, 0, 1]]
-            - 'distortion': np.ndarray - Distortion coefficients [k1, k2, p1, p2, k3, ...]
+            - 'distortion': (optional) np.ndarray - Distortion coefficients [k1, k2, p1, p2, k3, ...]
+                           If omitted, points are assumed to be pre-undistorted
             - 'extrinsic': np.ndarray of shape (4, 4) - Camera extrinsic matrix (world to camera)
                           [[r11, r12, r13, tx],
                            [r21, r22, r23, ty],
