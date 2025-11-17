@@ -5,7 +5,7 @@ Pillow>=8.0.0
 matplotlib>=3.5.0
 requests>=2.25.0
 pybind11[global]
--e git+https://github.com/cvg/LightGlue@main#egg=LightGlue
+-e git+https://github.com/cvg/LightGlue@main#egg=lightglue
 
 # Web server dependencies
 fastapi>=0.104.0
