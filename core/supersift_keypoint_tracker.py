@@ -75,6 +75,33 @@ from lightglue.utils import rbd
 import torch
 
 
+# ============================================================================
+class ImageFeature:
+    def __init__(self, siftfeature=None, superpointfeature=None, width=0, height=0, imagename="", keypoints_list=None):
+        self.data = {
+            "sift": siftfeature,  # SIFT features
+            "superpoint": superpointfeature,  # SuperPoint features
+            "width": width,  # image dimensions
+            "height": height,  # image dimensions
+            "name": imagename,  # image file name
+            "keypoints": keypoints_list if keypoints_list is not None else [],  # list of keypoint dicts
+        }
+
+    def get(self, key):
+        if key not in self.data:
+            raise KeyError(f"Key '{key}' not found in ImageFeature data.")
+        return self.data.get(key, None)
+
+    def set(self, key, value):
+        if key in self.data:
+            self.data[key] = value
+        else:
+            raise KeyError(f"Key '{key}' not found in ImageFeature data.")
+
+
+# ============================================================================
+
+
 class SuperSiftKeypointTracker(KeypointTracker):
     """SuperSift Keypoint Tracker combining SIFT and SuperPoint features.
 
@@ -109,13 +136,17 @@ class SuperSiftKeypointTracker(KeypointTracker):
             self.paths = {"project_root": project_root}
 
         self.__load_models()
+        # use kwargs to override default parameters if needed
+        if "thresold_distance" in kwargs:
+            self.thresold_distance = kwargs["thresold_distance"]
+        if "ransac_threshold" in kwargs:
+            self.ransac_reproj_threshold = kwargs["ransac_threshold"]
+        self.thresold_distance = 5.0  # Epipolar distance threshold for filtering matches
+        self.ransac_threshold = 0.618  # RANSAC reprojection threshold
 
-        self.thresold_distance = 5.0
-        self.downsample_factor = 1  # downsample factor for LightGlue processing
         # Data structures to hold reference images and keypoints, as well as other information
-        self.template_imagefilelist = []
-        self.precomputed_data = []  # list of (keypoints, descriptors) for each reference image
-        self.keypoints_list = []  # list of keypoints dict for each reference image
+        self.template_image_data = []  # list of ImageFeature objects for each reference image
+
         self.keypoints_dict = {}  # combined keypoints dict across all reference images
         self.F_store = []  # fundamental matrices between consecutive reference images
         self.update_required = False  # flag to indicate if F_store needs to be updated
@@ -139,14 +170,14 @@ class SuperSiftKeypointTracker(KeypointTracker):
         Returns:
             Dict with success status and information about the set reference image.
         """
-        gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-        kp, des = self.__detect_and_compute(gray_image)
-        torch_image = self.__convert2tensor(image)
-        superfeat = self.superpoint_extractor({"image": torch_image})
-        self.precomputed_data.append({"sift": (kp, des), "superpoint": superfeat})
-        self.keypoints_list.append(keypoints if keypoints is not None else [])
-        self.template_imagefilelist.append(image_name if image_name is not None else f"template_{len(self.template_imagefilelist)}")
-
+        self.template_image_data.append(
+            self.__create_image_data(
+                color_image=image,  #
+                keypoints_list=keypoints,  #
+                image_name=image_name if image_name is not None else f"template_{len(self.template_image_data)}",  #
+                color_order="RGB",  #
+            )  #
+        )
         self.update_required = True
 
     # ============================================================================
@@ -170,24 +201,23 @@ class SuperSiftKeypointTracker(KeypointTracker):
             }
         """
         index = -1
-        if image_name in self.template_imagefilelist:
-            index = self.template_imagefilelist.index(image_name)
-        elif image_name is None and len(self.template_imagefilelist) > 0:
-            index = len(self.template_imagefilelist) - 1
+        if image_name is not None:
+            index = next((i for i, img in enumerate(self.template_image_data) if img.get("name") == image_name), -1)
+        elif image_name is None and len(self.template_image_data) > 0:
+            index = len(self.template_image_data) - 1
 
         if index != -1:
-            removed_key = self.template_imagefilelist[index]
-            del self.template_imagefilelist[index]
-            del self.precomputed_data[index]
-            del self.keypoints_list[index]
+            removed_key = self.template_image_data[index].get("name")
+            del self.template_image_data[index]
 
             self.update_required = True
 
-            return {"success": True, "removed_key": removed_key, "remaining_count": len(self.template_imagefilelist)}
+            return {"success": True, "removed_key": removed_key, "remaining_count": len(self.template_image_data)}
         else:
-            return {"success": False, "removed_key": None, "remaining_count": len(self.template_imagefilelist), "error": f"Reference image '{image_name}' not found."}
+            return {"success": False, "removed_key": None, "remaining_count": len(self.template_image_data), "error": f"Reference image '{image_name}' not found."}
 
     # ============================================================================
+
     def track_keypoints(self, target_image: np.ndarray, reference_name: Optional[str] = None, **kwargs) -> Dict:
         """Track keypoints from stored reference image to target image.
 
@@ -212,7 +242,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
         """
         if not self.model_loaded:
             return {"success": False, "tracked_keypoints": [], "keypoints_count": 0, "processing_time": 0.0, "reference_name": "Multiple References", "error": "LightGlue model not loaded."}
-        if len(self.template_imagefilelist) < 2:
+        if len(self.template_image_data) < 2:
             return {"success": False, "tracked_keypoints": [], "keypoints_count": 0, "processing_time": 0.0, "reference_name": "Multiple References", "error": "SuperSiftKeypointTracker requires more than one reference image."}
 
         if self.update_required:
@@ -221,13 +251,13 @@ class SuperSiftKeypointTracker(KeypointTracker):
                 self.F_store = self.__compute_template_keypoint_maping()
             except Exception as e:
                 return {"success": False, "tracked_keypoints": [], "keypoints_count": 0, "processing_time": 0.0, "reference_name": "Multiple References", "error": f"Error computing fundamental matrices: {e}"}
-            if self.F_store is None or len(self.F_store) != len(self.template_imagefilelist):
+            if self.F_store is None or len(self.F_store) != len(self.template_image_data):
                 return {"success": False, "tracked_keypoints": [], "keypoints_count": 0, "processing_time": 0.0, "reference_name": "Multiple References", "error": "Failed to compute valid fundamental matrices between reference images."}
             self.update_required = False
 
         time_start = cv2.getTickCount()
-        gray_test_image = cv2.cvtColor(target_image, cv2.COLOR_RGB2GRAY)
-        estimated_positions = self.__find_point_correspondence(gray_test_image, target_image)
+        test_image_data = self.__create_image_data(color_image=target_image, color_order="RGB")
+        estimated_positions = self.__find_point_correspondence(test_image_data)
         time_end = cv2.getTickCount()
         processing_time = (time_end - time_start) / cv2.getTickFrequency()
         tracked_keypoints = []
@@ -240,6 +270,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
     # ============================================================================
     # PUBLIC INTERFACE
     # ============================================================================
+
     def load_all_reference_images(self, image_folder: str):
         """
         Load all reference images and their keypoints from the specified folder.
@@ -247,19 +278,18 @@ class SuperSiftKeypointTracker(KeypointTracker):
             image_folder (str): Path to the folder containing template images and JSON files.
         """
         self.__load_templates(image_folder)
-        if len(self.template_imagefilelist) == 0:
+        if len(self.template_image_data) == 0:
             raise ValueError("No template images found in the specified folder.")
         self.F_store = self.__compute_template_keypoint_maping()
         self.update_required = False
 
     # ============================================================================
+
     def remove_all_reference_images(self):
         """
         Remove all stored reference images and associated data.
         """
-        self.template_imagefilelist = []
-        self.precomputed_data = []
-        self.keypoints_list = []
+        self.template_image_data = []
         self.keypoints_dict = {}
         self.F_store = []
         self.update_required = False
@@ -267,15 +297,9 @@ class SuperSiftKeypointTracker(KeypointTracker):
     # ============================================================================
     # Private METHODS
     # ============================================================================
+
     def __load_models(self):
         """Load LightGlue model."""
-
-        project_root = self.paths["project_root"]
-        model_root = os.path.join(project_root, "models")
-        model_id = os.path.join(model_root, "lightglue_superpoint")
-
-        if not os.path.exists(model_id):
-            snapshot_download(repo_id="ETH-CVG/lightglue_superpoint", cache_dir=model_id, local_dir=model_id)
 
         try:
             self.superpoint_extractor = SuperPoint(max_num_keypoints=1024).eval().to(self.device)
@@ -288,6 +312,31 @@ class SuperSiftKeypointTracker(KeypointTracker):
             # raise e
 
     # ============================================================================
+    def __create_image_data(self, color_image: np.ndarray, gray_image: Optional[np.ndarray] = None, keypoints_list=None, image_name="", color_order="RGB"):
+        """
+        Create ImageFeature object from image
+        Args:
+            color_image (np.ndarray): Color image in RGB or BGR format. (H, W, 3)
+            gray_image (np.ndarray, optional): Grayscale version of the image. If None, it will be computed.
+            keypoints_list (list, optional): List of keypoint dictionaries.
+            image_name (str, optional): Name of the image.
+            color_order (str): Color order of the input color_image ("RGB" or "BGR").
+        """
+        if gray_image is None:
+            gray_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2GRAY) if color_order == "RGB" else cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
+        sift_kp, sift_des = self.__detect_and_compute(gray_image)
+        torch_image = self.__convert2tensor(color_image, order=color_order)
+        superpoint_feat = self.superpoint_extractor({"image": torch_image}) if self.model_loaded else None
+        return ImageFeature(  #
+            siftfeature=(sift_kp, sift_des),  #
+            superpointfeature=superpoint_feat,  #
+            width=color_image.shape[1],  #
+            height=color_image.shape[0],  #
+            imagename=image_name,  #
+            keypoints_list=keypoints_list,
+        )  #
+
+    # ============================================================================
 
     def __convert2tensor(self, image, order="RGB"):
         """Convert OpenCV image to Torch tensor."""
@@ -298,7 +347,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __load_templates(self, input_folder):
+    def __load_templates(self, input_folder: str):
         """
         Load template images and their keypoints from the specified folder.
         Precompute the neccessary data for each template image.
@@ -310,7 +359,8 @@ class SuperSiftKeypointTracker(KeypointTracker):
             raise ValueError(f"Input folder {input_folder} does not exist.")
 
         json_files = [f for f in os.listdir(input_folder) if f.endswith(".json")]
-        self.template_imagefilelist, self.keypoints_list, self.precomputed_data = [], [], []
+
+        self.template_image_data = []
 
         for json_file in json_files:
             json_path = os.path.join(input_folder, json_file)
@@ -323,14 +373,16 @@ class SuperSiftKeypointTracker(KeypointTracker):
             keypoints = data.get("keypoints")
             if keypoints is None:
                 raise ValueError(f"No keypoints found in JSON file {json_file}")
-            self.keypoints_list.append(keypoints)
-            self.template_imagefilelist.append(image_path)
 
-            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-            kp, des = self.__detect_and_compute(img)
-            color_image = cv2.imread(image_path, cv2.IMREAD_COLOR)
-            superfeat = self.superpoint_extractor({"image": self.__convert2tensor(color_image, order="BGR")})
-            self.precomputed_data.append({"sift": (kp, des), "superpoint": superfeat})
+            self.template_image_data.append(
+                self.__create_image_data(
+                    color_image=cv2.imread(image_path, cv2.IMREAD_COLOR),  #
+                    gray_image=cv2.imread(image_path, cv2.IMREAD_GRAYSCALE),  #
+                    keypoints_list=keypoints,  #
+                    image_name=os.path.basename(image_path),  #
+                    color_order="BGR",
+                )  #
+            )
 
         self.__update_keypoints_dict()
 
@@ -338,8 +390,9 @@ class SuperSiftKeypointTracker(KeypointTracker):
     def __update_keypoints_dict(self):
         """Update the combined keypoints dictionary across all reference images."""
         self.keypoints_dict = {}
-        for i, keypoints in enumerate(self.keypoints_list):
-            for kp in keypoints:
+
+        for i in range(len(self.template_image_data)):
+            for kp in self.template_image_data[i].get("keypoints"):
                 name = kp["name"]
                 x = kp["x"]
                 y = kp["y"]
@@ -352,51 +405,50 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __detect_and_compute(self, cv_image):
+    def __detect_and_compute(self, cv_image: np.ndarray, feature_type="sift"):
         """
         Detect keypoints and compute descriptors using SIFT or pypopsift.
         Args:
             cv_image (np.ndarray): Input image in OpenCV format (BGR or grayscale).
+            feature_type (str): Type of feature detector to use ("sift").
         Returns:
             keypoints (np.ndarray): Detected keypoints as an array of (x, y) coordinates.
             descriptors (np.ndarray): Corresponding descriptors for the keypoints.
         """
         grayimage = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY) if len(cv_image.shape) == 3 else cv_image
-        if USE_PYPOPSIFT:
-            # peak_threshold = 0.04 # mimic opencv default
-            peak_threshold = 0.03  # more keypoints, Lowe's paper
-            keypoints, descriptors = popsift(grayimage, peak_threshold=peak_threshold, edge_threshold=10, target_num_features=0)
-            keypoints = keypoints[:, :2]
+        if feature_type == "sift":
+            if USE_PYPOPSIFT:
+                # peak_threshold = 0.04 # mimic opencv default
+                peak_threshold = 0.03  # more keypoints, Lowe's paper
+                keypoints, descriptors = popsift(grayimage, peak_threshold=peak_threshold, edge_threshold=10, target_num_features=0)
+                keypoints = keypoints[:, :2]
+            else:
+                detector = cv2.SIFT_create()
+                keypoints, descriptors = detector.detectAndCompute(grayimage, None)
+                keypoints = np.array([kp.pt for kp in keypoints])
         else:
-            detector = cv2.SIFT_create()
-            keypoints, descriptors = detector.detectAndCompute(grayimage, None)
-            keypoints = np.array([kp.pt for kp in keypoints])
+            raise ValueError(f"Unsupported feature type: {feature_type}")
 
         return keypoints, descriptors
 
     # ============================================================================
 
-    def __match_features(self, desc1, desc2):
+    def __match_sift_features(self, image0_data: ImageFeature, image1_data: ImageFeature):
         """
-        Match features between two sets of descriptors using the specified method.
+        Match features between two sets of sift features.
         Args:
-            desc1 (np.ndarray): Descriptors from the first image.
-            desc2 (np.ndarray): Descriptors from the second image.
+            image0_data (ImageFeature): ImageFeature object for the first image.
+            image1_data (ImageFeature): ImageFeature object for the second image.
         """
-
-        # Use cross-check brute-force matcher (commented out for now)
-        # matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
-        # good_matches = matcher.match(desc1, desc2)
-
         # Use FLANN-based matcher for feature matching
-        index_params = dict(algorithm=1, trees=5)
-        search_params = dict(checks=50)
+        index_params = {"algorithm": 1, "trees": 5}
+        search_params = {"checks": 64}
         matcher = cv2.FlannBasedMatcher(index_params, search_params)
-        matches = matcher.knnMatch(desc1, desc2, k=2)
 
+        matches = matcher.knnMatch(image0_data.get("sift")[1], image1_data.get("sift")[1], k=2)
         good_matches = []
         for m, n in matches:
-            if m.distance < 0.75 * n.distance:
+            if m.distance < 0.6 * n.distance:
                 good_matches.append(m)
 
         return good_matches
@@ -410,14 +462,14 @@ class SuperSiftKeypointTracker(KeypointTracker):
             F_store (list): List of fundamental matrices between consecutive reference images (0->1, 1->2, ..., N-1->0).
         """
         F_store = []
-        for i in range(len(self.keypoints_list)):
+        for i in range(len(self.template_image_data)):
             ptlist_i = {}
-            for entry_i in self.keypoints_list[i]:
+            for entry_i in self.template_image_data[i].get("keypoints"):
                 ptlist_i[entry_i["name"]] = (entry_i["x"], entry_i["y"])
-            j = (i + 1) % len(self.keypoints_list)
+            j = (i + 1) % len(self.template_image_data)
             pts_i = []
             pts_j = []
-            for entry_j in self.keypoints_list[j]:
+            for entry_j in self.template_image_data[j].get("keypoints"):
                 name_j = entry_j["name"]
                 if name_j in ptlist_i:
                     pts_i.append(ptlist_i[name_j])
@@ -430,27 +482,25 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __compute_fundamentalmatrices(self, keypoints1, descriptor1, keypoints2, descriptor2, ransac_thresh=0.5):
+    def __compute_findamental_matrices(self, image0_data: ImageFeature, image1_data: ImageFeature, ransac_thresh: float = 0.5):
         """
         Find the fundamental matrix between two images using feature matching.
         Args:
-            keypoints1 (np.ndarray): Keypoints from image1.
-            template_descriptor (np.ndarray): Descriptors from image 1.
-            keypoints2 (np.ndarray): Keypoints from image 2.
-            descriptor2 (np.ndarray): Descriptors from image 2.
+            image0_data (ImageFeature): ImageFeature object for the first image.
+            image1_data (ImageFeature): ImageFeature object for the second image.
             ransac_thresh (float): RANSAC reprojection threshold.
 
         Returns:
             F (np.ndarray): Estimated fundamental matrix.
         """
-        matches = self.__match_features(descriptor1, descriptor2)
+        matches = self.__match_sift_features(image0_data, image1_data)
 
         if len(matches) < 8:
-            print("Not enough matches ({}) found to compute the fundamental matrix.").format(len(matches))
+            print("Not enough matches ({}) found to compute the fundamental matrix.".format(len(matches)))
             return None, None
 
-        pts1 = np.array([keypoints1[m.queryIdx] for m in matches], dtype=np.float32)
-        pts2 = np.array([keypoints2[m.trainIdx] for m in matches], dtype=np.float32)
+        pts1 = np.array([image0_data.get("sift")[0][m.queryIdx] for m in matches], dtype=np.float32)
+        pts2 = np.array([image1_data.get("sift")[0][m.trainIdx] for m in matches], dtype=np.float32)
         F, mask = cv2.findFundamentalMat(pts1, pts2, cv2.FM_RANSAC, ransacReprojThreshold=ransac_thresh)
         return F, mask.sum() / len(matches)
 
@@ -493,27 +543,45 @@ class SuperSiftKeypointTracker(KeypointTracker):
         F_dict, Ratio_dict = {}, {}
         for idx, matches in enumerate(test_keypoints_map_list):
             filtered_matches = []
-            
+
             # for (tx, ty), (template_x, template_y) in matches.items():
             #     filtered_matches.append((tx, ty, template_x, template_y))
 
-            next_idx = (idx + 1) % len(self.precomputed_data)
-            prev_idx = (idx - 1 + len(self.precomputed_data)) % len(self.precomputed_data)
+            next_idx = (idx + 1) % len(self.template_image_data)
+            prev_idx = (idx - 1 + len(self.template_image_data)) % len(self.template_image_data)
+
             F = self.F_store[idx]
             invF = self.F_store[prev_idx].T
-            for (tx, ty), (template_x, template_y) in matches.items():
-                if (tx, ty) in test_keypoints_map_list[next_idx]:
-                    x, y = test_keypoints_map_list[next_idx][(tx, ty)]
-                    distance, distance_back = self.__point_to_epipolar_distance(F, (template_x, template_y), (x, y), True)
-                    if max(distance, distance_back) < self.thresold_distance:
-                        filtered_matches.append((tx, ty, template_x, template_y))
-                        continue
+            for (tx, ty), entries in matches.items():
+                find = False
+                best_template_x, best_template_y = -1, -1
+                best_distance = self.thresold_distance
+                for template_x, template_y in entries:
+                    if (tx, ty) in test_keypoints_map_list[next_idx]:
+                        kp_list = test_keypoints_map_list[next_idx][(tx, ty)]
+                        if not isinstance(kp_list, list) or len(kp_list) == 0:
+                            print(type(kp_list), len(kp_list))
+                            raise ValueError("kp_list must be a non-empty list of template keypoints.")
+                        for x, y in kp_list:
+                            distance, distance_back = self.__point_to_epipolar_distance(F, (template_x, template_y), (x, y), True)
+                            dis = max(distance, distance_back)
+                            if dis < best_distance:
+                                best_distance = dis
+                                best_template_x, best_template_y = template_x, template_y
+                                find = True
+                            continue
 
-                if (tx, ty) in test_keypoints_map_list[prev_idx]:
-                    x, y = test_keypoints_map_list[prev_idx][(tx, ty)]
-                    distance, distance_back = self.__point_to_epipolar_distance(invF, (template_x, template_y), (x, y), True)
-                    if max(distance, distance_back) < self.thresold_distance:
-                        filtered_matches.append((tx, ty, template_x, template_y))
+                    if (tx, ty) in test_keypoints_map_list[prev_idx]:
+                        kp_list = test_keypoints_map_list[prev_idx][(tx, ty)]
+                        for x, y in kp_list:
+                            distance, distance_back = self.__point_to_epipolar_distance(invF, (template_x, template_y), (x, y), True)
+                            dis = max(distance, distance_back)
+                            if dis < best_distance:
+                                best_distance = dis
+                                best_template_x, best_template_y = template_x, template_y
+                                find = True
+                if find:
+                    filtered_matches.append((tx, ty, best_template_x, best_template_y))
 
             if len(filtered_matches) < 7:
                 print(f"Not enough matches ({len(filtered_matches)}) after filtering between test image and template {idx}.")
@@ -521,7 +589,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
             filter_testp = np.array([[tx, ty] for tx, ty, template_x, template_y in filtered_matches], dtype=np.float32)
             filter_templatep = np.array([[template_x, template_y] for tx, ty, template_x, template_y in filtered_matches], dtype=np.float32)
 
-            F, mask = cv2.findFundamentalMat(filter_testp, filter_templatep, cv2.FM_7POINT if len(filtered_matches) == 7 else cv2.FM_RANSAC, ransacReprojThreshold=0.618)
+            F, mask = cv2.findFundamentalMat(filter_testp, filter_templatep, cv2.FM_7POINT if len(filtered_matches) == 7 else cv2.FM_RANSAC, ransacReprojThreshold=self.ransac_threshold)
             mask = mask.ravel().astype(bool)
             # print(f"Template {idx}: {mask.sum()} inliers found out of {len(filtered_matches)} matches.")
             F_dict[idx] = F
@@ -530,24 +598,20 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __compute_findamental_matrices_via_superpoint(self, color_test_image, test_kp, test_des):
+    def __compute_findamental_matrices_via_superpoint(self, test_image_data):
         """
         Compute fundamental matrices between the test image and each reference image using SuperPoint features.
         Args:
-            color_test_image (np.ndarray): Test image in RGB format.
-            test_kp (np.ndarray): Keypoints from the test image.
-            test_des (np.ndarray): Descriptors from the test image.
+            test_image_data (ImageFeature): ImageFeature object for the test image.
         Returns:
             F_dict (dict): Dictionary of fundamental matrices for each reference image.
             Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
         """
         test_keypoints_map_list = []
 
-        test_spfeat = self.superpoint_extractor({"image": self.__convert2tensor(color_test_image)})
-
-        for id in range(len(self.template_imagefilelist)):
-            matches01 = self.superpoint_matcher({"image0": test_spfeat, "image1": self.precomputed_data[id]["superpoint"]})
-            feats0, feats1, matches01 = [rbd(x) for x in [test_spfeat, self.precomputed_data[id]["superpoint"], matches01]]  # remove batch dimension
+        for id in range(len(self.template_image_data)):
+            matches01 = self.superpoint_matcher({"image0": test_image_data.get("superpoint"), "image1": self.template_image_data[id].get("superpoint")})
+            feats0, feats1, matches01 = [rbd(x) for x in [test_image_data.get("superpoint"), self.template_image_data[id].get("superpoint"), matches01]]  # remove batch dimension
             matches = matches01["matches"]  # indices with shape (K,2)
             sp_keypoint0 = feats0["keypoints"][matches[..., 0]].cpu().numpy()  # coordinates in image #0, shape (K,2)
             sp_keypoint1 = feats1["keypoints"][matches[..., 1]].cpu().numpy()  # coordinates in image #1, shape (K,2)
@@ -555,38 +619,41 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
             test_keypoint_map = {}
             for p, q in zip(sp_keypoint0, sp_keypoint1):
-                test_keypoint_map[(int(p[0]), int(p[1]))] = (int(q[0]), int(q[1]))
+                if (int(p[0]), int(p[1])) not in test_keypoint_map:
+                    test_keypoint_map[(int(p[0]), int(p[1]))] = []
+                test_keypoint_map[(int(p[0]), int(p[1]))].append((int(q[0]), int(q[1])))
 
-            matches = self.__match_features(test_des, self.precomputed_data[id]["sift"][1])
+            matches = self.__match_sift_features(test_image_data, self.template_image_data[id])
             for m in matches:
-                tx, ty = test_kp[m.queryIdx]
-                # if (tx, ty) not in test_keypoint_map:
-                template_x, template_y = self.precomputed_data[id]["sift"][0][m.trainIdx]
-                test_keypoint_map[(int(tx), int(ty))] = (int(template_x), int(template_y))
+                tx, ty = test_image_data.get("sift")[0][m.queryIdx]
+                template_x, template_y = self.template_image_data[id].get("sift")[0][m.trainIdx]
+                if (int(tx), int(ty)) not in test_keypoint_map:
+                    test_keypoint_map[(int(tx), int(ty))] = []
+                test_keypoint_map[(int(tx), int(ty))].append((int(template_x), int(template_y)))
 
             test_keypoints_map_list.append(test_keypoint_map)
 
         return self.__filter_matched_points_via_epipolar_constraint(test_keypoints_map_list)
 
     # ============================================================================
-    def __compute_findamental_matrices_via_cross_check(self, test_kp, test_des):
+
+    def __compute_findamental_matrices_via_cross_check(self, test_image_data):
         """
         Compute fundamental matrices between the test image and each reference image using sift feature matching and epipolar constraints.
         Args:
-            test_kp (np.ndarray): Keypoints from the test image.
-            test_des (np.ndarray): Descriptors from the test image.
+            test_image_data (ImageFeature): ImageFeature object for the test image.
         Returns:
             F_dict (dict): Dictionary of fundamental matrices for each reference image.
             Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
         """
         test_keypoints_map_list = []
         test_keypoint_map = []
-        for idx, (template_kp, template_des) in enumerate(self.precomputed_data):
+        for tp_image_data in self.template_image_data:
             test_keypoint_map = {}
-            matches = self.__match_features(test_des, template_des)
+            matches = self.__match_sift_features(test_image_data, tp_image_data)
             for m in matches:
-                tx, ty = test_kp[m.queryIdx]
-                template_x, template_y = template_kp[m.trainIdx]
+                tx, ty = test_image_data.get("sift")[0][m.queryIdx]
+                template_x, template_y = tp_image_data.get("sift")[0][m.trainIdx]
                 test_keypoint_map[(int(tx), int(ty))] = (int(template_x), int(template_y))
             test_keypoints_map_list.append(test_keypoint_map)
 
@@ -594,13 +661,11 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __compute_findamental_matrices_directly(self, test_kp, test_des):
+    def __compute_findamental_matrices_directly(self, test_image_data):
         """
         Compute fundamental matrices between the test image and each reference image directly using sift feature matching.
         Args:
-            test_kp (np.ndarray): Keypoints from the test image.
-            test_des (np.ndarray): Descriptors
-            test image.
+            test_image_data (ImageFeature): ImageFeature object for the test image.
         Returns:
             F_dict (dict): Dictionary of fundamental matrices for each reference image.
             Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
@@ -608,14 +673,14 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
         # Parallelize the computation of fundamental matrices
         def compute_F_for_template(args):
-            idx, (template_kp, template_des), test_kp, test_des = args
-            F, ratio = self.__compute_fundamentalmatrices(test_kp, test_des, template_kp, template_des)
+            idx, test_image_data, template_image_data = args
+            F, ratio = self.__compute_fundamentalmatrices(test_image_data, template_image_data, ransac_thresh=self.ransac_threshold)
             return idx, F, ratio
 
         F_dict = {}
         Ratio_dict = {}
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            args_list = [(idx, data, test_kp, test_des) for idx, data in enumerate(self.precomputed_data)]
+            args_list = [(idx, test_image_data, self.template_image_data[idx]) for idx, data in enumerate(self.template_image_data)]
             results = list(executor.map(compute_F_for_template, args_list))
             for idx, F, ratio in results:
                 if F is not None:
@@ -657,18 +722,15 @@ class SuperSiftKeypointTracker(KeypointTracker):
 
     # ============================================================================
 
-    def __find_point_correspondence(self, gray_test_image, color_test_image):
+    def __find_point_correspondence(self, test_image_data):
         """
         Find marked point correspondences between the test image (gray) and reference images.
         Args:
-            gray_test_image (np.ndarray): Test image in OpenCV format (gray).
-            color_test_image (np.ndarray): Color test image in RGB format.
+            test_image_data (ImageFeature): ImageFeature object for the test image.
         Returns:
             estimated_positions (dict): Estimated positions of marked points in the test image.
         """
         estimated_positions = {}
-
-        test_kp, test_des = self.__detect_and_compute(gray_test_image)
 
         method = "superpoint"
         if self.model_loaded is False and method == "superpoint":
@@ -676,13 +738,13 @@ class SuperSiftKeypointTracker(KeypointTracker):
         F_dict, Ratio_dict = {}, {}
         try:
             if method == "cross_check":
-                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_cross_check(test_kp, test_des)
+                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_cross_check(test_image_data)
             else:  # default to superpoint method
-                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_superpoint(color_test_image, test_kp, test_des)
+                F_dict, Ratio_dict = self.__compute_findamental_matrices_via_superpoint(test_image_data)
         except Exception as e:
             print(f"Error computing fundamental matrices: {e}")
             print("Falling back to direct computation method.")
-            F_dict, Ratio_dict = self.__compute_findamental_matrices_directly(test_kp, test_des)
+            F_dict, Ratio_dict = self.__compute_findamental_matrices_directly(test_image_data)
 
         for name, entries in self.keypoints_dict.items():
             if len(entries["info"]) < 2:
