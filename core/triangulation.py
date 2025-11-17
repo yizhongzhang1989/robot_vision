@@ -11,11 +11,6 @@ Date: November 2025
 import numpy as np
 import cv2
 from typing import List, Dict
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 
 def triangulate_multiview(view_data: List[Dict]) -> Dict:
@@ -133,8 +128,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
                 'num_views': len(view_data)
             }
         
-        logger.info(f"Triangulating {num_points} points from {len(view_data)} views")
-        
         # ========================================
         # UNDISTORT POINTS
         # ========================================
@@ -163,12 +156,9 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
                 
                 undistorted_2d = undistorted.reshape(-1, 2)
                 undistorted_points.append(undistorted_2d)
-                
-                logger.debug(f"View {i}: Undistorted {len(undistorted_2d)} points")
             else:
                 # Points are already undistorted
                 undistorted_points.append(points_2d)
-                logger.debug(f"View {i}: Using pre-undistorted {len(points_2d)} points")
         
         # ========================================
         # PREPARE PROJECTION MATRICES
@@ -192,16 +182,13 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
                 # Projection matrix P = K * [R|t]
                 P = intrinsic @ RT
                 projection_matrices.append(P)
-            except Exception as e:
-                logger.error(f"Error preparing projection matrix for view {i}: {e}")
+            except Exception:
                 raise
             
             # Calculate camera center in world coordinates
             # Camera center: C = -R^T * t
             camera_center = -R.T @ t
             camera_centers.append(camera_center)
-            
-            logger.debug(f"View {i}: Projection matrix shape {P.shape}")
         
         # ========================================
         # TRIANGULATE POINTS
@@ -217,8 +204,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             # Triangulate using DLT
             point_3d = _triangulate_dlt(observations_2d, projection_matrices)
             points_3d[point_idx] = point_3d
-        
-        logger.info(f"Triangulated {num_points} 3D points")
         
         # ========================================
         # CALCULATE REPROJECTION ERRORS
@@ -259,8 +244,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             # Calculate reprojection errors for each point
             errors = np.linalg.norm(original_points_2d - projected_points, axis=1)
             reprojection_errors.append(errors)
-            
-            logger.debug(f"View {view_idx}: Mean reprojection error = {np.mean(errors):.3f} pixels")
         
         # ========================================
         # PREPARE RESULTS
@@ -281,7 +264,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         except Exception:
             error_msg = "Unknown error (encoding issue)"
         
-        logger.error(f"Triangulation failed: {error_msg}")
         return {
             'success': False,
             'error_message': error_msg,
@@ -333,7 +315,6 @@ def _triangulate_dlt(points_2d: List[np.ndarray],
         X_3d = X_homogeneous[:3] / X_homogeneous[3]
     else:
         # Point at infinity - use unnormalized coordinates
-        logger.warning("Triangulation resulted in point at infinity")
         X_3d = X_homogeneous[:3]
     
     return X_3d
