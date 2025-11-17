@@ -56,22 +56,10 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         {
             'success': bool - Whether triangulation succeeded
             'points_3d': np.ndarray of shape (N, 3) - Triangulated 3D points in world coordinates
-            'num_points': int - Number of triangulated points
-            'num_views': int - Number of views used
-            'reprojection_errors': List[Dict] - Reprojection error for each view
-                [
-                    {
-                        'view_index': int,
-                        'mean_error': float - Mean reprojection error in pixels,
-                        'max_error': float - Maximum reprojection error in pixels,
-                        'errors_per_point': np.ndarray - Error for each point
-                    },
-                    ...
-                ]
-            'mean_reprojection_error': float - Overall mean reprojection error across all views
-            'points_per_point_errors': np.ndarray of shape (N,) - Mean reprojection error per point
-            'triangulation_angles': np.ndarray of shape (N,) - Triangulation angle for each point (degrees)
-            'error_message': str - Error message if success is False
+            'reprojection_errors': List[np.ndarray] - Per-point reprojection errors for each view
+                List of length num_views, where each element is an np.ndarray of shape (N,)
+                containing the reprojection error in pixels for each of the N points in that view
+            'error_message': str - Error message if success is False (only present when success=False)
         }
     
     Raises:
@@ -99,7 +87,8 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         
         if result['success']:
             points_3d = result['points_3d']
-            mean_error = result['mean_reprojection_error']
+            reprojection_errors = result['reprojection_errors']
+            mean_error = np.mean([np.mean(errors) for errors in reprojection_errors])
             print(f"Triangulated {len(points_3d)} points with mean error {mean_error:.2f} pixels")
     """
     try:
@@ -206,7 +195,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         # ========================================
         
         points_3d = np.zeros((num_points, 3))
-        triangulation_angles = np.zeros(num_points)
         
         for point_idx in range(num_points):
             # Collect 2D observations for this point from all views
@@ -216,18 +204,6 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             # Triangulate using DLT
             point_3d = _triangulate_dlt(observations_2d, projection_matrices)
             points_3d[point_idx] = point_3d
-            
-            # Calculate triangulation angle (angle between rays from first two cameras)
-            if len(camera_centers) >= 2:
-                ray1 = point_3d - camera_centers[0]
-                ray2 = point_3d - camera_centers[1]
-                
-                ray1_norm = ray1 / (np.linalg.norm(ray1) + 1e-10)
-                ray2_norm = ray2 / (np.linalg.norm(ray2) + 1e-10)
-                
-                cos_angle = np.clip(np.dot(ray1_norm, ray2_norm), -1.0, 1.0)
-                angle_rad = np.arccos(cos_angle)
-                triangulation_angles[point_idx] = np.degrees(angle_rad)
         
         logger.info(f"Triangulated {num_points} 3D points")
         
@@ -235,9 +211,9 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         # CALCULATE REPROJECTION ERRORS
         # ========================================
         
+        # reprojection_errors: List of per-point errors for each view
+        # Shape: List[np.ndarray] where each array has shape (num_points,)
         reprojection_errors = []
-        all_errors = []
-        points_per_point_errors = np.zeros(num_points)
         
         for view_idx, view in enumerate(view_data):
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
@@ -261,30 +237,11 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             )
             projected_points = projected_points.reshape(-1, 2)
             
-            # Calculate reprojection errors
+            # Calculate reprojection errors for each point
             errors = np.linalg.norm(original_points_2d - projected_points, axis=1)
+            reprojection_errors.append(errors)
             
-            view_error_info = {
-                'view_index': view_idx,
-                'mean_error': float(np.mean(errors)),
-                'max_error': float(np.max(errors)),
-                'min_error': float(np.min(errors)),
-                'std_error': float(np.std(errors)),
-                'errors_per_point': errors
-            }
-            
-            reprojection_errors.append(view_error_info)
-            all_errors.extend(errors)
-            points_per_point_errors += errors
-            
-            logger.debug(f"View {view_idx}: Mean reprojection error = {view_error_info['mean_error']:.3f} pixels")
-        
-        # Average error per point across all views
-        points_per_point_errors /= len(view_data)
-        
-        mean_reprojection_error = float(np.mean(all_errors))
-        
-        logger.info(f"Mean reprojection error across all views: {mean_reprojection_error:.3f} pixels")
+            logger.debug(f"View {view_idx}: Mean reprojection error = {np.mean(errors):.3f} pixels")
         
         # ========================================
         # PREPARE RESULTS
@@ -293,13 +250,7 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         result = {
             'success': True,
             'points_3d': points_3d,
-            'num_points': num_points,
-            'num_views': len(view_data),
-            'reprojection_errors': reprojection_errors,
-            'mean_reprojection_error': mean_reprojection_error,
-            'points_per_point_errors': points_per_point_errors,
-            'triangulation_angles': triangulation_angles,
-            'camera_centers': np.array(camera_centers)
+            'reprojection_errors': reprojection_errors
         }
         
         return result

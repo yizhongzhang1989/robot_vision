@@ -101,7 +101,7 @@ def load_chessboard_test_data():
             config_data = json.load(f)
         pattern = load_pattern_from_json(config_data)
     except Exception as e:
-        print(f"Failed to load pattern configuration: {e}")
+        print(f"Failed to load pattern configuration: {str(e).encode('ascii', 'replace').decode('ascii')}")
         return None
     
     # Create calibrator and calibrate
@@ -175,7 +175,7 @@ def load_chessboard_test_data():
     return view_data
 
 
-def visualize_triangulation_3d(view_data, triangulation_result):
+def visualize_triangulation_3d(view_data, result):
     """
     Create 3D visualization of triangulation results.
     
@@ -187,12 +187,10 @@ def visualize_triangulation_3d(view_data, triangulation_result):
     
     Args:
         view_data: List of view dictionaries containing camera parameters
-        triangulation_result: Dict containing triangulation results with keys:
+        result: Dict from triangulate_multiview() with keys:
+            - 'success': bool
             - 'points_3d': np.ndarray of triangulated 3D points
-            - 'camera_centers': np.ndarray of camera center positions
-            - 'num_points': Number of triangulated points
-            - 'num_views': Number of views used
-            - 'mean_reprojection_error': Mean reprojection error in pixels
+            - 'reprojection_errors': List[np.ndarray] of per-point errors
     """
     print("\n[*] Opening 3D visualization...")
     print("-" * 80)
@@ -203,8 +201,23 @@ def visualize_triangulation_3d(view_data, triangulation_result):
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D
         
-        points_3d = triangulation_result['points_3d']
-        camera_centers = triangulation_result['camera_centers']
+        points_3d = result['points_3d']
+        reprojection_errors = result['reprojection_errors']
+        
+        # Calculate camera centers from view data
+        camera_centers = []
+        for view in view_data:
+            extrinsic = np.array(view['extrinsic'])
+            R = extrinsic[:3, :3]
+            t = extrinsic[:3, 3]
+            camera_center = -R.T @ t
+            camera_centers.append(camera_center)
+        camera_centers = np.array(camera_centers)
+        
+        # Calculate metrics
+        num_points = len(points_3d)
+        num_views = len(view_data)
+        mean_reprojection_error = float(np.mean([np.mean(errors) for errors in reprojection_errors]))
         
         fig = plt.figure(figsize=(14, 10))
         ax = fig.add_subplot(111, projection='3d')
@@ -231,8 +244,8 @@ def visualize_triangulation_3d(view_data, triangulation_result):
         ax.set_xlabel('X (m)', fontsize=12)
         ax.set_ylabel('Y (m)', fontsize=12)
         ax.set_zlabel('Z (m)', fontsize=12)
-        ax.set_title(f'3D Triangulation Result\n{triangulation_result["num_points"]} points from {triangulation_result["num_views"]} views\n'
-                    f'Mean reprojection error: {triangulation_result["mean_reprojection_error"]:.3f} px',
+        ax.set_title(f'3D Triangulation Result\n{num_points} points from {num_views} views\n'
+                    f'Mean reprojection error: {mean_reprojection_error:.3f} px',
                     fontsize=14, fontweight='bold')
         ax.legend(fontsize=11)
         
@@ -314,90 +327,38 @@ def run_triangulation_example_with_data(view_data, visualize=False):
         return {'error': result.get('error_message', 'Unknown error')}
     
     points_3d = result['points_3d']
+    reprojection_errors = result['reprojection_errors']  # List of per-point errors for each view
     
-    print(f"[+] Triangulated {result['num_points']} 3D points from {result['num_views']} views")
-    print(f"   Mean reprojection error: {result['mean_reprojection_error']:.3f} pixels")
+    num_points = len(points_3d)
+    num_views = len(view_data)
+    
+    # Calculate mean reprojection error across all views
+    all_errors = np.concatenate(reprojection_errors)
+    mean_reprojection_error = float(np.mean(all_errors))
+    
+    print(f"[+] Triangulated {num_points} 3D points from {num_views} views")
+    print(f"   Mean reprojection error: {mean_reprojection_error:.3f} pixels")
     
     # Print per-view errors
     print("\n   Per-view reprojection errors:")
-    for err_info in result['reprojection_errors']:
-        print(f"     View {err_info['view_index']}: "
-              f"mean={err_info['mean_error']:.3f}px, "
-              f"max={err_info['max_error']:.3f}px, "
-              f"std={err_info['std_error']:.3f}px")
-    
-    # ========================================
-    # STEP 3: QUALITY ANALYSIS
-    # ========================================
-    
-    print("\n[3] Step 3: Analyzing triangulation quality...")
-    print("-" * 80)
-    
-    # Check planarity (points should lie on a plane)
-    # Fit a plane to the triangulated points
-    centroid = np.mean(points_3d, axis=0)
-    points_centered = points_3d - centroid
-    _, _, Vt = np.linalg.svd(points_centered)
-    normal = Vt[-1]  # Normal vector of the best-fit plane
-    
-    # Calculate distances from points to the plane
-    distances_to_plane = np.abs(np.dot(points_centered, normal))
-    mean_planarity_error = np.mean(distances_to_plane)
-    max_planarity_error = np.max(distances_to_plane)
-    
-    print("Planarity analysis:")
-    print(f"  Mean distance to plane: {mean_planarity_error*1000:.3f} mm")
-    print(f"  Max distance to plane: {max_planarity_error*1000:.3f} mm")
-    
-    # Analyze triangulation angles
-    mean_angle = np.mean(result['triangulation_angles'])
-    min_angle = np.min(result['triangulation_angles'])
-    max_angle = np.max(result['triangulation_angles'])
-    
-    print("\nTriangulation angles:")
-    print(f"  Mean: {mean_angle:.1f}°")
-    print(f"  Min: {min_angle:.1f}°")
-    print(f"  Max: {max_angle:.1f}°")
-    
-    # ========================================
-    # SUMMARY
-    # ========================================
-    
-    print("\n" + "=" * 80)
-    print("EXAMPLE SUMMARY")
-    print("=" * 80)
-    
-    print("\nQuality Metrics:")
-    print(f"  Reprojection error: {result['mean_reprojection_error']:.3f} px")
-    print(f"  Planarity error: {mean_planarity_error*1000:.3f} mm")
-    print(f"  Triangulation angle: {mean_angle:.1f}°")
+    for view_idx, errors in enumerate(reprojection_errors):
+        print(f"     View {view_idx}: "
+              f"mean={np.mean(errors):.3f}px, "
+              f"max={np.max(errors):.3f}px, "
+              f"std={np.std(errors):.3f}px")
     
     # ========================================
     # VISUALIZATION
     # ========================================
     
-    # Prepare return result
-    result_dict = {
-        'num_points': result['num_points'],
-        'num_views': result['num_views'],
-        'mean_reprojection_error': result['mean_reprojection_error'],
-        'mean_planarity_error': float(mean_planarity_error),
-        'mean_triangulation_angle': float(mean_angle),
-        'points_3d': points_3d,
-        'camera_centers': result['camera_centers']
-    }
-    
     if visualize:
-        visualize_triangulation_3d(view_data, result_dict)
+        visualize_triangulation_3d(view_data, result)
     
     return {
-        'num_points': result['num_points'],
-        'num_views': result['num_views'],
-        'mean_reprojection_error': result['mean_reprojection_error'],
-        'mean_planarity_error': float(mean_planarity_error),
-        'mean_triangulation_angle': float(mean_angle),
-        'points_3d': points_3d,
-        'camera_centers': result['camera_centers']
+        'num_points': num_points,
+        'num_views': num_views,
+        'mean_reprojection_error': mean_reprojection_error,
+        'points_3d': points_3d
     }
 
 
@@ -464,8 +425,6 @@ def main():
         print(f"  - Triangulated {example_result['num_points']} 3D points")
         print(f"  - Used {example_result['num_views']} camera views")
         print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
-        print(f"  - Planarity error: {example_result['mean_planarity_error']*1000:.3f} mm")
-        print(f"  - Mean triangulation angle: {example_result['mean_triangulation_angle']:.1f}°")
         sys.exit(0)
     except Exception as e:
         print(f"\n[-] Example failed with exception: {e}")
