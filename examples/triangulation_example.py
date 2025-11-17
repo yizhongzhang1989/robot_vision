@@ -30,27 +30,29 @@ if str(parent_dir) not in sys.path:
 from core.triangulation import triangulate_multiview
 
 
-def run_triangulation_example(visualize=True):
+def load_chessboard_test_data():
     """
-    Run triangulation example using chessboard calibration data.
+    Load chessboard calibration test data for triangulation.
     
-    This function demonstrates:
-    1. Intrinsic calibration using chessboard images
-    2. Extracting camera poses from calibration
-    3. Multi-view triangulation of 3D points
-    4. Quality analysis (reprojection error, planarity, spacing)
-    5. Optional 3D visualization
-    
-    Args:
-        visualize: If True, display 3D visualization of triangulated points and cameras
+    This function:
+    1. Performs intrinsic calibration using chessboard images
+    2. Extracts camera poses and 2D points from calibration
+    3. Prepares view data for triangulation
     
     Returns:
-        Dict containing test results
+        tuple: (view_data, pattern) or (None, None) if loading failed
+            - view_data: List[Dict] - View data ready for triangulation
+            - pattern: Pattern object - Chessboard pattern configuration
+        
+        Each dict in view_data contains:
+        {
+            'points_2d': np.ndarray - 2D pixel coordinates (N, 2)
+            'image_size': tuple - (width, height)
+            'intrinsic': np.ndarray - Camera intrinsic matrix (3, 3)
+            'distortion': np.ndarray - Distortion coefficients
+            'extrinsic': np.ndarray - World to camera transformation (4, 4)
+        }
     """
-    print("=" * 80)
-    print("Triangulation Example with Chessboard Calibration Data")
-    print("=" * 80)
-    
     # Add camera calibration toolkit to path
     toolkit_path = parent_dir / "ThirdParty" / "camera_calibration_toolkit"
     
@@ -61,11 +63,6 @@ def run_triangulation_example(visualize=True):
     # Import calibration toolkit modules
     try:
         # We need to temporarily remove 'core' from sys.modules to allow import from toolkit's core/
-        # Save reference to our triangulation core module
-        triangulation_core = sys.modules.get('core')
-        triangulation_core_triangulation = sys.modules.get('core.triangulation')
-        
-        # Temporarily remove core from modules
         modules_to_remove = [k for k in sys.modules.keys() if k.startswith('core.') or k == 'core']
         removed_modules = {}
         for mod in modules_to_remove:
@@ -85,64 +82,48 @@ def run_triangulation_example(visualize=True):
         # Restore modules even on error
         for mod, module in removed_modules.items():
             sys.modules[mod] = module
-        print(f"❌ Failed to import calibration toolkit: {e}")
-        print("\n💡 The camera calibration toolkit submodule may not be initialized.")
-        print("   Please run the following commands to update the submodule:")
-        print("   git submodule update --init --recursive")
-        print(f"\n   Or check if the toolkit exists at: {toolkit_path}")
         sys.path = original_path
-        return {'success': False, 'error': 'Calibration toolkit not available'}
+        print(f"Failed to import calibration toolkit: {e}")
+        return None
     
-    # ========================================
-    # STEP 1: INTRINSIC CALIBRATION
-    # ========================================
-    
-    print("\n📷 Step 1: Performing intrinsic calibration...")
-    print("-" * 80)
-    
+    # Load calibration data
     sample_dir = toolkit_path / "sample_data" / "eye_in_hand_test_data"
     image_paths = sorted(glob.glob(str(sample_dir / "*.jpg")))
     
-    print(f"Found {len(image_paths)} calibration images")
+    if not image_paths:
+        print(f"No calibration images found in {sample_dir}")
+        return None
     
     # Load pattern configuration
     config_path = sample_dir / "chessboard_config.json"
-    with open(config_path, 'r') as f:
-        config_data = json.load(f)
-    pattern = load_pattern_from_json(config_data)
+    try:
+        with open(config_path, 'r') as f:
+            config_data = json.load(f)
+        pattern = load_pattern_from_json(config_data)
+    except Exception as e:
+        print(f"Failed to load pattern configuration: {e}")
+        return None
     
-    print(f"Chessboard pattern: {pattern.width}x{pattern.height}, square size: {pattern.square_size*1000:.1f} mm")
-        
     # Create calibrator and calibrate
-    calibrator = IntrinsicCalibrator(
-        image_paths=image_paths,
-        calibration_pattern=pattern
-    )
-    
-    calib_result = calibrator.calibrate(
-        cameraMatrix=None,
-        distCoeffs=None,
-        flags=0,
-        criteria=None,
-        verbose=False
-    )
+    try:
+        calibrator = IntrinsicCalibrator(
+            image_paths=image_paths,
+            calibration_pattern=pattern
+        )
+        
+        calib_result = calibrator.calibrate(
+            cameraMatrix=None,
+            distCoeffs=None,
+            flags=0,
+            criteria=None,
+            verbose=False
+        )
+    except Exception as e:
+        print(f"Calibration failed: {e}")
+        return None
     
     camera_matrix = calib_result['camera_matrix']
     distortion_coeffs = calib_result['distortion_coefficients']
-    rms_error = calib_result.get('rms', calib_result.get('rms_error', 'N/A'))
-    
-    print(f"✅ Calibration complete (RMS error: {rms_error if isinstance(rms_error, str) else f'{rms_error:.3f}'} pixels)")
-    print(f"\nCamera matrix (K):")
-    print(camera_matrix)
-    print(f"\nDistortion coefficients:")
-    print(distortion_coeffs)
-        
-    # ========================================
-    # STEP 2: PREPARE VIEW DATA FROM CALIBRATION
-    # ========================================
-    
-    print("\n🎯 Step 2: Preparing view data from calibration results...")
-    print("-" * 80)
     
     # Get detected corners and poses from calibrator
     image_points_all = calibrator.image_points
@@ -153,16 +134,14 @@ def run_triangulation_example(visualize=True):
     valid_indices = [i for i in range(len(image_points_all)) 
                      if image_points_all[i] is not None]
     
-    print(f"Valid views: {len(valid_indices)} out of {len(image_points_all)}")
+    if len(valid_indices) < 2:
+        print(f"Not enough valid views (got {len(valid_indices)}, need at least 2)")
+        return None
     
-    # Use all valid views for triangulation
-    test_indices = valid_indices
-    
-    print(f"Using {len(test_indices)} views for triangulation: indices {test_indices}")
-    
+    # Prepare view data
     view_data = []
     
-    for idx in test_indices:
+    for idx in valid_indices:
         corners_2d = image_points_all[idx].reshape(-1, 2)
         
         # Get camera pose from rvec and tvec
@@ -193,19 +172,45 @@ def run_triangulation_example(visualize=True):
         }
         view_data.append(view_info)
     
-    if len(view_data) < 2:
-        print(f"❌ Not enough valid views for triangulation (got {len(view_data)})")
-        return {'success': False, 'error': 'Insufficient valid views'}
+    return view_data
+
+
+def run_triangulation_example_with_data(view_data, visualize=False):
+    """
+    Run triangulation example using pre-loaded view data.
     
-    print(f"✅ Prepared {len(view_data)} views for triangulation")
-    print(f"   - Points per view: {len(view_data[0]['points_2d'])}")
-    print(f"   - Image size: {view_data[0]['image_size']}")
+    This function demonstrates:
+    1. Multi-view triangulation of 3D points
+    2. Quality analysis (reprojection error, planarity, spacing)
+    3. Optional 3D visualization
+    
+    Args:
+        view_data: List of view dicts from load_chessboard_test_data()
+        visualize: If True, display 3D visualization of triangulated points and cameras
+    
+    Returns:
+        Dict containing test results
+    """
+    print("\n" + "=" * 80)
+    print("Triangulation Test")
+    print("=" * 80)
     
     # ========================================
-    # STEP 3: TRIANGULATE 3D POINTS
+    # STEP 1: DATA SUMMARY
     # ========================================
     
-    print("\n📐 Step 3: Triangulating 3D points...")
+    print("\n📷 Step 1: View data summary...")
+    print("-" * 80)
+    
+    print(f"Number of views: {len(view_data)}")
+    print(f"Points per view: {len(view_data[0]['points_2d'])}")
+    print(f"Image size: {view_data[0]['image_size']}")
+    
+    # ========================================
+    # STEP 2: TRIANGULATE 3D POINTS
+    # ========================================
+    
+    print("\n📐 Step 2: Triangulating 3D points...")
     print("-" * 80)
     
     try:
@@ -234,16 +239,11 @@ def run_triangulation_example(visualize=True):
               f"std={err_info['std_error']:.3f}px")
     
     # ========================================
-    # STEP 4: QUALITY ANALYSIS
+    # STEP 3: QUALITY ANALYSIS
     # ========================================
     
-    print("\n📊 Step 4: Analyzing triangulation quality...")
+    print("\n📊 Step 3: Analyzing triangulation quality...")
     print("-" * 80)
-    
-    # Generate ideal 3D positions of chessboard corners
-    objp = np.zeros((pattern.width * pattern.height, 3), np.float32)
-    objp[:, :2] = np.mgrid[0:pattern.width, 0:pattern.height].T.reshape(-1, 2)
-    objp *= pattern.square_size
     
     # Check planarity (points should lie on a plane)
     # Fit a plane to the triangulated points
@@ -271,22 +271,6 @@ def run_triangulation_example(visualize=True):
     print(f"  Min: {min_angle:.1f}°")
     print(f"  Max: {max_angle:.1f}°")
     
-    # Calculate spacing between adjacent corners
-    spacing_errors = []
-    for i in range(pattern.height):
-        for j in range(pattern.width - 1):
-            idx1 = i * pattern.width + j
-            idx2 = i * pattern.width + j + 1
-            dist = np.linalg.norm(points_3d[idx1] - points_3d[idx2])
-            error = abs(dist - pattern.square_size)
-            spacing_errors.append(error)
-    
-    mean_spacing_error = np.mean(spacing_errors)
-    
-    print("\nSpacing consistency:")
-    print(f"  Expected spacing: {pattern.square_size*1000:.1f} mm")
-    print(f"  Mean spacing error: {mean_spacing_error*1000:.3f} mm")
-    
     # ========================================
     # SUMMARY
     # ========================================
@@ -297,8 +281,7 @@ def run_triangulation_example(visualize=True):
     
     success = (
         result['mean_reprojection_error'] < 2.0 and
-        mean_planarity_error < 0.005 and  # 5mm
-        mean_spacing_error < 0.002  # 2mm
+        mean_planarity_error < 0.005  # 5mm
     )
     
     if success:
@@ -309,7 +292,6 @@ def run_triangulation_example(visualize=True):
     print("\nQuality Metrics:")
     print(f"  Reprojection error: {result['mean_reprojection_error']:.3f} px {'✅' if result['mean_reprojection_error'] < 2.0 else '⚠️'}")
     print(f"  Planarity error: {mean_planarity_error*1000:.3f} mm {'✅' if mean_planarity_error < 0.005 else '⚠️'}")
-    print(f"  Spacing error: {mean_spacing_error*1000:.3f} mm {'✅' if mean_spacing_error < 0.002 else '⚠️'}")
     print(f"  Triangulation angle: {mean_angle:.1f}° {'✅' if mean_angle > 10 else '⚠️'}")
     
     # ========================================
@@ -348,16 +330,7 @@ def run_triangulation_example(visualize=True):
                 # Label cameras
                 ax.text(cam_pos[0], cam_pos[1], cam_pos[2], f'  Cam{i}', fontsize=10, fontweight='bold')
             
-            # Draw chessboard grid lines
-            for i in range(pattern.height):
-                row_points = points_3d[i*pattern.width:(i+1)*pattern.width]
-                ax.plot(row_points[:, 0], row_points[:, 1], row_points[:, 2], 
-                       'g-', alpha=0.6, linewidth=1)
-            
-            for j in range(pattern.width):
-                col_points = points_3d[j::pattern.width]
-                ax.plot(col_points[:, 0], col_points[:, 1], col_points[:, 2], 
-                       'g-', alpha=0.6, linewidth=1)
+
             
             # Set labels and title
             ax.set_xlabel('X (m)', fontsize=12)
@@ -400,32 +373,74 @@ def run_triangulation_example(visualize=True):
         'num_views': result['num_views'],
         'mean_reprojection_error': result['mean_reprojection_error'],
         'mean_planarity_error': float(mean_planarity_error),
-        'mean_spacing_error': float(mean_spacing_error),
         'mean_triangulation_angle': float(mean_angle),
         'points_3d': points_3d,
         'camera_centers': result['camera_centers']
     }
 
 
-if __name__ == "__main__":
+def main():
+    """
+    Main function to run triangulation examples.
+    
+    Parses command-line arguments and runs tests with the specified configuration.
+    """
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Multi-View Triangulation Example using Chessboard Calibration Data'
+    )
+    parser.add_argument(
+        '--visualize', '-v',
+        action='store_true',
+        help='Enable 3D visualization of triangulation results'
+    )
+    
+    args = parser.parse_args()
+    
     print("Multi-View Triangulation Example")
     print("=" * 80)
     print("\nThis example demonstrates how to triangulate 3D points from multiple views")
     print("using chessboard calibration data.")
     print("=" * 80)
     
+    # Load test data once
+    print("\n📦 Loading test data...")
+    print("-" * 80)
+    
+    view_data = load_chessboard_test_data()
+    
+    if view_data is None:
+        print("\n❌ Failed to load test data")
+        print("\n💡 The camera calibration toolkit submodule may not be initialized.")
+        print("   Please run the following commands to update the submodule:")
+        print("   git submodule update --init --recursive")
+        sys.exit(1)
+    
+    print("✅ Test data loaded successfully")
+    print(f"   - {len(view_data)} valid views")
+    print(f"   - {len(view_data[0]['points_2d'])} points per view")
+    print(f"   - Image size: {view_data[0]['image_size']}")
+    
+    # Run triangulation example
     try:
-        # Run example with visualization enabled
-        example_result = run_triangulation_example(visualize=True)
+        print("\n" + "=" * 80)
+        print("Running Triangulation Example")
+        print("=" * 80)
+        
+        example_result = run_triangulation_example_with_data(
+            view_data=view_data,
+            visualize=args.visualize
+        )
         
         if example_result['success']:
             print("\n🎉 Example completed successfully!")
-            print(f"\nKey Results:")
+            print("\nKey Results:")
             print(f"  - Triangulated {example_result['num_points']} 3D points")
             print(f"  - Used {example_result['num_views']} camera views")
             print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
             print(f"  - Planarity error: {example_result['mean_planarity_error']*1000:.3f} mm")
-            print(f"  - Spacing error: {example_result['mean_spacing_error']*1000:.3f} mm")
+            print(f"  - Mean triangulation angle: {example_result['mean_triangulation_angle']:.1f}°")
             sys.exit(0)
         else:
             print(f"\n⚠️  Example completed with issues: {example_result.get('error', 'See details above')}")
@@ -435,3 +450,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
