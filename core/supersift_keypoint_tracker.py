@@ -364,6 +364,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
             # raise e
 
     # ============================================================================
+
     def __create_image_data(self, color_image: np.ndarray, gray_image: Optional[np.ndarray] = None, keypoints=None, image_name="", color_order="RGB"):
         """
         Create ImageFeature object from image
@@ -377,6 +378,11 @@ class SuperSiftKeypointTracker(KeypointTracker):
         if gray_image is None:
             gray_image = cv2.cvtColor(color_image, cv2.COLOR_RGB2GRAY) if color_order == "RGB" else cv2.cvtColor(color_image, cv2.COLOR_BGR2GRAY)
         sift_kp, sift_des = self.__detect_and_compute(gray_image)
+        # compute rootsift
+        if sift_des is not None and len(sift_des) > 0:
+            sift_des /= np.linalg.norm(sift_des, axis=1, keepdims=True) + 1e-10
+            sift_des = np.sqrt(sift_des)
+
         torch_image = self.__convert2tensor(color_image, order=color_order)
         with torch.inference_mode():
             superpoint_feat = self.superpoint_extractor({"image": torch_image}) if self.model_loaded else None
@@ -440,6 +446,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
         self.__update_keypoints_dict()
 
     # ============================================================================
+
     def __update_keypoints_dict(self):
         """Update the combined keypoints dictionary across all reference images."""
         self.keypoints_dict = {}
@@ -725,21 +732,18 @@ class SuperSiftKeypointTracker(KeypointTracker):
             Ratio_dict (dict): Dictionary of inlier ratios for each reference image.
         """
 
-        # Parallelize the computation of fundamental matrices
-        def compute_F_for_template(args):
-            idx, test_image_data, template_image_data = args
-            F, ratio = self.__compute_fundamentalmatrices(test_image_data, template_image_data, ransac_thresh=self.ransac_threshold)
-            return idx, F, ratio
-
         F_dict = {}
         Ratio_dict = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            args_list = [(idx, test_image_data, self.template_image_data[idx]) for idx, data in enumerate(self.template_image_data)]
-            results = list(executor.map(compute_F_for_template, args_list))
-            for idx, F, ratio in results:
-                if F is not None:
-                    F_dict[idx] = F
-                    Ratio_dict[idx] = ratio
+
+        for i in range(len(self.template_image_data)):
+            matches = self.__match_sift_features(test_image_data, self.template_image_data[i])
+            if len(matches) < 8:
+                print(f"Not enough matches ({len(matches)}) found between test image and template {i} to compute the fundamental matrix.")
+                continue
+            F, ratio = self.__compute_findamental_matrices(test_image_data, self.template_image_data[i], ransac_thresh=self.ransac_threshold)
+            F_dict[i] = F
+            Ratio_dict[i] = ratio
+
         return F_dict, Ratio_dict
 
     # ============================================================================
@@ -795,6 +799,7 @@ class SuperSiftKeypointTracker(KeypointTracker):
                 F_dict, Ratio_dict = self.__compute_findamental_matrices_via_cross_check(test_image_data)
             else:  # default to superpoint method
                 F_dict, Ratio_dict = self.__compute_findamental_matrices_via_superpoint(test_image_data)
+
         except Exception as e:
             print(f"Error computing fundamental matrices: {e}")
             print("Falling back to direct computation method.")
