@@ -175,6 +175,94 @@ def load_chessboard_test_data():
     return view_data
 
 
+def visualize_triangulation_3d(view_data, triangulation_result):
+    """
+    Create 3D visualization of triangulation results.
+    
+    Displays:
+    - Triangulated 3D points
+    - Camera positions and orientations
+    - Lines connecting cameras to point cloud center
+    - Quality metrics in the title
+    
+    Args:
+        view_data: List of view dictionaries containing camera parameters
+        triangulation_result: Dict containing triangulation results with keys:
+            - 'points_3d': np.ndarray of triangulated 3D points
+            - 'camera_centers': np.ndarray of camera center positions
+            - 'num_points': Number of triangulated points
+            - 'num_views': Number of views used
+            - 'mean_reprojection_error': Mean reprojection error in pixels
+    """
+    print("\n[*] Opening 3D visualization...")
+    print("-" * 80)
+    
+    try:
+        import matplotlib
+        matplotlib.use('TkAgg')  # Use interactive backend
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+        
+        points_3d = triangulation_result['points_3d']
+        camera_centers = triangulation_result['camera_centers']
+        
+        fig = plt.figure(figsize=(14, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Plot triangulated 3D points
+        ax.scatter(points_3d[:, 0], points_3d[:, 1], points_3d[:, 2], 
+                  c='blue', marker='o', s=30, label='Triangulated Points', alpha=0.8)
+        
+        # Plot camera positions
+        ax.scatter(camera_centers[:, 0], camera_centers[:, 1], camera_centers[:, 2],
+                  c='red', marker='^', s=150, label='Camera Positions', edgecolors='black', linewidths=2)
+        
+        # Draw lines from cameras to center of point cloud
+        points_center = np.mean(points_3d, axis=0)
+        for i, cam_pos in enumerate(camera_centers):
+            ax.plot([cam_pos[0], points_center[0]], 
+                   [cam_pos[1], points_center[1]], 
+                   [cam_pos[2], points_center[2]], 
+                   'r--', alpha=0.3, linewidth=1.5)
+            # Label cameras
+            ax.text(cam_pos[0], cam_pos[1], cam_pos[2], f'  Cam{i}', fontsize=10, fontweight='bold')
+        
+        # Set labels and title
+        ax.set_xlabel('X (m)', fontsize=12)
+        ax.set_ylabel('Y (m)', fontsize=12)
+        ax.set_zlabel('Z (m)', fontsize=12)
+        ax.set_title(f'3D Triangulation Result\n{triangulation_result["num_points"]} points from {triangulation_result["num_views"]} views\n'
+                    f'Mean reprojection error: {triangulation_result["mean_reprojection_error"]:.3f} px',
+                    fontsize=14, fontweight='bold')
+        ax.legend(fontsize=11)
+        
+        # Equal aspect ratio
+        max_range = np.array([points_3d[:, 0].max()-points_3d[:, 0].min(),
+                             points_3d[:, 1].max()-points_3d[:, 1].min(),
+                             points_3d[:, 2].max()-points_3d[:, 2].min()]).max() / 2.0
+        mid_x = (points_3d[:, 0].max()+points_3d[:, 0].min()) * 0.5
+        mid_y = (points_3d[:, 1].max()+points_3d[:, 1].min()) * 0.5
+        mid_z = (points_3d[:, 2].max()+points_3d[:, 2].min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        # Add grid
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        print("[+] Visualization closed")
+        
+    except ImportError as e:
+        print(f"[!] Could not create visualization: matplotlib not available ({e})")
+    except Exception as e:
+        print(f"[!] Visualization error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 def run_triangulation_example_with_data(view_data, visualize=False):
     """
     Run triangulation example using pre-loaded view data.
@@ -199,7 +287,7 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     # STEP 1: DATA SUMMARY
     # ========================================
     
-    print("\n📷 Step 1: View data summary...")
+    print("\n[1] Step 1: View data summary...")
     print("-" * 80)
     
     print(f"Number of views: {len(view_data)}")
@@ -210,24 +298,24 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     # STEP 2: TRIANGULATE 3D POINTS
     # ========================================
     
-    print("\n📐 Step 2: Triangulating 3D points...")
+    print("\n[2] Step 2: Triangulating 3D points...")
     print("-" * 80)
     
     try:
         result = triangulate_multiview(view_data)
     except Exception as e:
-        print(f"❌ Exception in triangulate_multiview(): {e}")
+        print(f"[-] Exception in triangulate_multiview(): {e}")
         import traceback
         traceback.print_exc()
-        return {'success': False, 'error': str(e)}
+        return {'error': str(e)}
     
     if not result['success']:
-        print(f"❌ Triangulation failed: {result.get('error_message', 'Unknown error')}")
-        return result
+        print(f"[-] Triangulation failed: {result.get('error_message', 'Unknown error')}")
+        return {'error': result.get('error_message', 'Unknown error')}
     
     points_3d = result['points_3d']
     
-    print(f"✅ Triangulated {result['num_points']} 3D points from {result['num_views']} views")
+    print(f"[+] Triangulated {result['num_points']} 3D points from {result['num_views']} views")
     print(f"   Mean reprojection error: {result['mean_reprojection_error']:.3f} pixels")
     
     # Print per-view errors
@@ -242,7 +330,7 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     # STEP 3: QUALITY ANALYSIS
     # ========================================
     
-    print("\n📊 Step 3: Analyzing triangulation quality...")
+    print("\n[3] Step 3: Analyzing triangulation quality...")
     print("-" * 80)
     
     # Check planarity (points should lie on a plane)
@@ -279,96 +367,30 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     print("EXAMPLE SUMMARY")
     print("=" * 80)
     
-    success = (
-        result['mean_reprojection_error'] < 2.0 and
-        mean_planarity_error < 0.005  # 5mm
-    )
-    
-    if success:
-        print("✅ EXCELLENT RESULTS")
-    else:
-        print("⚠️  ACCEPTABLE RESULTS WITH WARNINGS")
-    
     print("\nQuality Metrics:")
-    print(f"  Reprojection error: {result['mean_reprojection_error']:.3f} px {'✅' if result['mean_reprojection_error'] < 2.0 else '⚠️'}")
-    print(f"  Planarity error: {mean_planarity_error*1000:.3f} mm {'✅' if mean_planarity_error < 0.005 else '⚠️'}")
-    print(f"  Triangulation angle: {mean_angle:.1f}° {'✅' if mean_angle > 10 else '⚠️'}")
+    print(f"  Reprojection error: {result['mean_reprojection_error']:.3f} px")
+    print(f"  Planarity error: {mean_planarity_error*1000:.3f} mm")
+    print(f"  Triangulation angle: {mean_angle:.1f}°")
     
     # ========================================
     # VISUALIZATION
     # ========================================
     
+    # Prepare return result
+    result_dict = {
+        'num_points': result['num_points'],
+        'num_views': result['num_views'],
+        'mean_reprojection_error': result['mean_reprojection_error'],
+        'mean_planarity_error': float(mean_planarity_error),
+        'mean_triangulation_angle': float(mean_angle),
+        'points_3d': points_3d,
+        'camera_centers': result['camera_centers']
+    }
+    
     if visualize:
-        print("\n📊 Opening 3D visualization...")
-        print("-" * 80)
-        
-        try:
-            import matplotlib
-            matplotlib.use('TkAgg')  # Use interactive backend
-            import matplotlib.pyplot as plt
-            from mpl_toolkits.mplot3d import Axes3D
-            
-            fig = plt.figure(figsize=(14, 10))
-            ax = fig.add_subplot(111, projection='3d')
-            
-            # Plot triangulated 3D points
-            ax.scatter(points_3d[:, 0], points_3d[:, 1], points_3d[:, 2], 
-                      c='blue', marker='o', s=30, label='Triangulated Points', alpha=0.8)
-            
-            # Plot camera positions
-            camera_centers = result['camera_centers']
-            ax.scatter(camera_centers[:, 0], camera_centers[:, 1], camera_centers[:, 2],
-                      c='red', marker='^', s=150, label='Camera Positions', edgecolors='black', linewidths=2)
-            
-            # Draw lines from cameras to center of point cloud
-            points_center = np.mean(points_3d, axis=0)
-            for i, cam_pos in enumerate(camera_centers):
-                ax.plot([cam_pos[0], points_center[0]], 
-                       [cam_pos[1], points_center[1]], 
-                       [cam_pos[2], points_center[2]], 
-                       'r--', alpha=0.3, linewidth=1.5)
-                # Label cameras
-                ax.text(cam_pos[0], cam_pos[1], cam_pos[2], f'  Cam{i}', fontsize=10, fontweight='bold')
-            
-
-            
-            # Set labels and title
-            ax.set_xlabel('X (m)', fontsize=12)
-            ax.set_ylabel('Y (m)', fontsize=12)
-            ax.set_zlabel('Z (m)', fontsize=12)
-            ax.set_title(f'3D Triangulation Result\n{result["num_points"]} points from {result["num_views"]} views\n'
-                        f'Mean reprojection error: {result["mean_reprojection_error"]:.3f} px',
-                        fontsize=14, fontweight='bold')
-            ax.legend(fontsize=11)
-            
-            # Equal aspect ratio
-            max_range = np.array([points_3d[:, 0].max()-points_3d[:, 0].min(),
-                                 points_3d[:, 1].max()-points_3d[:, 1].min(),
-                                 points_3d[:, 2].max()-points_3d[:, 2].min()]).max() / 2.0
-            mid_x = (points_3d[:, 0].max()+points_3d[:, 0].min()) * 0.5
-            mid_y = (points_3d[:, 1].max()+points_3d[:, 1].min()) * 0.5
-            mid_z = (points_3d[:, 2].max()+points_3d[:, 2].min()) * 0.5
-            ax.set_xlim(mid_x - max_range, mid_x + max_range)
-            ax.set_ylim(mid_y - max_range, mid_y + max_range)
-            ax.set_zlim(mid_z - max_range, mid_z + max_range)
-            
-            # Add grid
-            ax.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.show()
-            
-            print("✅ Visualization closed")
-            
-        except ImportError as e:
-            print(f"⚠️  Could not create visualization: matplotlib not available ({e})")
-        except Exception as e:
-            print(f"⚠️  Visualization error: {e}")
-            import traceback
-            traceback.print_exc()
+        visualize_triangulation_3d(view_data, result_dict)
     
     return {
-        'success': success,
         'num_points': result['num_points'],
         'num_views': result['num_views'],
         'mean_reprojection_error': result['mean_reprojection_error'],
@@ -405,19 +427,19 @@ def main():
     print("=" * 80)
     
     # Load test data once
-    print("\n📦 Loading test data...")
+    print("\n[*] Loading test data...")
     print("-" * 80)
     
     view_data = load_chessboard_test_data()
     
     if view_data is None:
-        print("\n❌ Failed to load test data")
-        print("\n💡 The camera calibration toolkit submodule may not be initialized.")
+        print("\n[-] Failed to load test data")
+        print("\n[!] The camera calibration toolkit submodule may not be initialized.")
         print("   Please run the following commands to update the submodule:")
         print("   git submodule update --init --recursive")
         sys.exit(1)
     
-    print("✅ Test data loaded successfully")
+    print("[+] Test data loaded successfully")
     print(f"   - {len(view_data)} valid views")
     print(f"   - {len(view_data[0]['points_2d'])} points per view")
     print(f"   - Image size: {view_data[0]['image_size']}")
@@ -433,20 +455,20 @@ def main():
             visualize=args.visualize
         )
         
-        if example_result['success']:
-            print("\n🎉 Example completed successfully!")
-            print("\nKey Results:")
-            print(f"  - Triangulated {example_result['num_points']} 3D points")
-            print(f"  - Used {example_result['num_views']} camera views")
-            print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
-            print(f"  - Planarity error: {example_result['mean_planarity_error']*1000:.3f} mm")
-            print(f"  - Mean triangulation angle: {example_result['mean_triangulation_angle']:.1f}°")
-            sys.exit(0)
-        else:
-            print(f"\n⚠️  Example completed with issues: {example_result.get('error', 'See details above')}")
+        if 'error' in example_result:
+            print(f"\n[!] Example completed with issues: {example_result['error']}")
             sys.exit(1)
+        
+        print("\n[+] Example completed successfully!")
+        print("\nKey Results:")
+        print(f"  - Triangulated {example_result['num_points']} 3D points")
+        print(f"  - Used {example_result['num_views']} camera views")
+        print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
+        print(f"  - Planarity error: {example_result['mean_planarity_error']*1000:.3f} mm")
+        print(f"  - Mean triangulation angle: {example_result['mean_triangulation_angle']:.1f}°")
+        sys.exit(0)
     except Exception as e:
-        print(f"\n❌ Example failed with exception: {e}")
+        print(f"\n[-] Example failed with exception: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(2)
