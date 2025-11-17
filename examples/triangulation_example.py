@@ -517,6 +517,161 @@ def run_triangulation_with_undistorted_points(view_data, visualize=False):
     }
 
 
+def test_error_handling():
+    """
+    Test error handling with various invalid inputs.
+    
+    Tests:
+    1. Missing required fields
+    2. Mismatched point counts
+    3. Empty point arrays
+    4. Invalid matrix shapes
+    5. Insufficient views
+    """
+    print("\n" + "="*80)
+    print("ERROR HANDLING TESTS")
+    print("="*80)
+    
+    test_cases = []
+    
+    # Test 1: Missing required field
+    test_cases.append({
+        'name': 'Missing intrinsic matrix',
+        'data': [
+            {
+                'points_2d': np.array([[100, 100], [200, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                # Missing 'intrinsic'
+                'extrinsic': np.eye(4, dtype=np.float64)
+            },
+            {
+                'points_2d': np.array([[150, 100], [250, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float64)
+            }
+        ]
+    })
+    
+    # Test 2: Mismatched point counts
+    test_cases.append({
+        'name': 'Mismatched point counts between views',
+        'data': [
+            {
+                'points_2d': np.array([[100, 100], [200, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.eye(4, dtype=np.float64)
+            },
+            {
+                'points_2d': np.array([[150, 100], [250, 200], [300, 300]], dtype=np.float32),  # 3 points
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float64)
+            }
+        ]
+    })
+    
+    # Test 3: Empty point arrays
+    test_cases.append({
+        'name': 'Empty point arrays',
+        'data': [
+            {
+                'points_2d': np.array([], dtype=np.float32).reshape(0, 2),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.eye(4, dtype=np.float64)
+            },
+            {
+                'points_2d': np.array([], dtype=np.float32).reshape(0, 2),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float64)
+            }
+        ]
+    })
+    
+    # Test 4: Too few views
+    test_cases.append({
+        'name': 'Only one view (insufficient)',
+        'data': [
+            {
+                'points_2d': np.array([[100, 100], [200, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.eye(4, dtype=np.float64)
+            }
+        ]
+    })
+    
+    # Test 5: None input
+    test_cases.append({
+        'name': 'None input',
+        'data': None
+    })
+    
+    # Test 6: Invalid intrinsic shape
+    test_cases.append({
+        'name': 'Invalid intrinsic matrix shape (2x2 instead of 3x3)',
+        'data': [
+            {
+                'points_2d': np.array([[100, 100], [200, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0], [0, 800]], dtype=np.float64),  # Wrong shape
+                'extrinsic': np.eye(4, dtype=np.float64)
+            },
+            {
+                'points_2d': np.array([[150, 100], [250, 200]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.array([[1, 0, 0, 0.1], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype=np.float64)
+            }
+        ]
+    })
+    
+    # Test 7: Identical camera poses (degenerate)
+    test_cases.append({
+        'name': 'Identical camera poses (degenerate configuration)',
+        'data': [
+            {
+                'points_2d': np.array([[320, 240], [350, 250]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.eye(4, dtype=np.float64)
+            },
+            {
+                'points_2d': np.array([[320, 240], [350, 250]], dtype=np.float32),
+                'image_size': (640, 480),
+                'intrinsic': np.array([[800, 0, 320], [0, 800, 240], [0, 0, 1]], dtype=np.float64),
+                'extrinsic': np.eye(4, dtype=np.float64)  # Same pose
+            }
+        ]
+    })
+    
+    # Run all tests
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\nTest {i}: {test_case['name']}")
+        print("-" * 70)
+        
+        try:
+            result = triangulate_multiview(test_case['data'])
+            
+            if result['success']:
+                print(f"  Result: SUCCESS")
+                if 'points_3d' in result:
+                    print(f"  Triangulated {len(result['points_3d'])} points")
+            else:
+                print(f"  Result: FAILED (as expected)")
+                print(f"  Error: {result.get('error_message', 'No error message')}")
+        except Exception as e:
+            print(f"  Result: EXCEPTION")
+            print(f"  Exception: {type(e).__name__}: {str(e).encode('ascii', 'replace').decode('ascii')}")
+    
+    print("\n" + "="*80)
+    print("ERROR HANDLING TESTS COMPLETED")
+    print("="*80)
+
+
 def main():
     """
     Main function to run triangulation examples.
@@ -604,6 +759,9 @@ def main():
             print(f"\nTest 1 (with distortion model):     {example_result['mean_reprojection_error']:.3f} px")
             print(f"Test 2 (pre-undistorted, no model):  {undistorted_result['mean_reprojection_error']:.3f} px")
             print(f"Difference:                          {abs(example_result['mean_reprojection_error'] - undistorted_result['mean_reprojection_error']):.3f} px")
+        
+        # Test 3: Error handling tests
+        test_error_handling()
         
         sys.exit(0)
     except Exception as e:
