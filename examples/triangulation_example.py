@@ -83,7 +83,7 @@ def load_chessboard_test_data():
         for mod, module in removed_modules.items():
             sys.modules[mod] = module
         sys.path = original_path
-        print(f"Failed to import calibration toolkit: {e}")
+        print(f"Failed to import calibration toolkit: {str(e).encode('ascii', 'replace').decode('ascii')}")
         return None
     
     # Load calibration data
@@ -119,7 +119,7 @@ def load_chessboard_test_data():
             verbose=False
         )
     except Exception as e:
-        print(f"Calibration failed: {e}")
+        print(f"Calibration failed: {str(e).encode('ascii', 'replace').decode('ascii')}")
         return None
     
     camera_matrix = calib_result['camera_matrix']
@@ -269,9 +269,9 @@ def visualize_triangulation_3d(view_data, result):
         print("[+] Visualization closed")
         
     except ImportError as e:
-        print(f"[!] Could not create visualization: matplotlib not available ({e})")
+        print(f"[!] Could not create visualization: matplotlib not available ({str(e).encode('ascii', 'replace').decode('ascii')})")
     except Exception as e:
-        print(f"[!] Visualization error: {e}")
+        print(f"[!] Visualization error: {str(e).encode('ascii', 'replace').decode('ascii')}")
         import traceback
         traceback.print_exc()
 
@@ -296,31 +296,14 @@ def run_triangulation_example_with_data(view_data, visualize=False):
     print("Triangulation Test")
     print("=" * 80)
     
-    # ========================================
-    # STEP 1: DATA SUMMARY
-    # ========================================
-    
-    print("\n[1] Step 1: View data summary...")
-    print("-" * 80)
-    
-    print(f"Number of views: {len(view_data)}")
-    print(f"Points per view: {len(view_data[0]['points_2d'])}")
-    print(f"Image size: {view_data[0]['image_size']}")
-    
-    # ========================================
-    # STEP 2: TRIANGULATE 3D POINTS
-    # ========================================
-    
-    print("\n[2] Step 2: Triangulating 3D points...")
-    print("-" * 80)
-    
     try:
         result = triangulate_multiview(view_data)
     except Exception as e:
-        print(f"[-] Exception in triangulate_multiview(): {e}")
+        error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        print(f"[-] Exception in triangulate_multiview(): {error_msg}")
         import traceback
         traceback.print_exc()
-        return {'error': str(e)}
+        return {'error': error_msg}
     
     if not result['success']:
         print(f"[-] Triangulation failed: {result.get('error_message', 'Unknown error')}")
@@ -360,6 +343,9 @@ def run_triangulation_example_with_data(view_data, visualize=False):
         'mean_reprojection_error': mean_reprojection_error,
         'points_3d': points_3d
     }
+
+
+
 
 
 def main():
@@ -427,7 +413,7 @@ def main():
         print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
         sys.exit(0)
     except Exception as e:
-        print(f"\n[-] Example failed with exception: {e}")
+        print(f"\n[-] Example failed with exception: {str(e).encode('ascii', 'replace').decode('ascii')}")
         import traceback
         traceback.print_exc()
         sys.exit(2)
