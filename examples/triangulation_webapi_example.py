@@ -287,20 +287,17 @@ def image_to_base64(image: np.ndarray) -> str:
     Convert numpy image to base64 encoded string.
     
     Args:
-        image: Image as numpy array (BGR or RGB)
+        image: Image as numpy array (BGR format from OpenCV)
         
     Returns:
         Base64 encoded image string with data URI prefix
+        
+    Note:
+        The image is encoded directly as PNG without color space conversion.
+        The FFPP server will handle any necessary conversions internally.
     """
-    # Ensure RGB format
-    if len(image.shape) == 3 and image.shape[2] == 3:
-        # Assume BGR from OpenCV, convert to RGB
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    else:
-        image_rgb = image
-    
-    # Encode as PNG
-    success, buffer = cv2.imencode('.png', cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR))
+    # Encode as PNG directly (no color conversion needed)
+    success, buffer = cv2.imencode('.png', image)
     if not success:
         raise ValueError("Failed to encode image")
     
