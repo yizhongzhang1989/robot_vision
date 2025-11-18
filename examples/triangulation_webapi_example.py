@@ -241,20 +241,80 @@ class PositioningServiceClient:
                 'error': str(e)
             }
     
-    def get_result(self, session_id: str) -> Dict:
+    def get_result(self, session_id: str, timeout: int = 0) -> Dict:
         """
-        Get triangulation result for a completed session.
+        Get triangulation result for a session.
         
         Args:
             session_id: Session identifier
+            timeout: Maximum wait time in milliseconds. If 0, return immediately.
+                    If > 0, wait up to timeout ms for completion.
             
         Returns:
-            Triangulation result with 3D points
+            Triangulation result with 3D points and per-view keypoints.
+            If not completed and timeout=0, returns session status instead.
         """
         try:
-            response = self.session.get(f"{self.service_url}/result/{session_id}")
-            response.raise_for_status()
-            return response.json()
+            if timeout == 0:
+                # Check if completed first
+                status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+                status_response.raise_for_status()
+                status_data = status_response.json()
+                
+                if not status_data.get('success'):
+                    return status_data
+                
+                session_info = status_data.get('session', {})
+                session_status = session_info.get('status')
+                
+                if session_status != 'completed':
+                    # Return status if not completed
+                    return status_data
+                
+                # Get result if completed
+                response = self.session.get(f"{self.service_url}/result/{session_id}")
+                response.raise_for_status()
+                return response.json()
+            else:
+                # Wait for completion with timeout
+                start_time = time.time() * 1000  # Convert to ms
+                check_interval = 100  # ms
+                
+                while True:
+                    elapsed = (time.time() * 1000) - start_time
+                    
+                    if elapsed >= timeout:
+                        # Timeout - return current status
+                        status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+                        status_response.raise_for_status()
+                        status_data = status_response.json()
+                        if status_data.get('success'):
+                            status_data['timeout'] = True
+                        return status_data
+                    
+                    # Check status
+                    status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+                    status_response.raise_for_status()
+                    status_data = status_response.json()
+                    
+                    if not status_data.get('success'):
+                        return status_data
+                    
+                    session_info = status_data.get('session', {})
+                    session_status = session_info.get('status')
+                    
+                    if session_status == 'completed':
+                        # Get result
+                        response = self.session.get(f"{self.service_url}/result/{session_id}")
+                        response.raise_for_status()
+                        return response.json()
+                    elif session_status == 'failed':
+                        # Return failure status
+                        return status_data
+                    
+                    # Wait before next check
+                    time.sleep(check_interval / 1000.0)
+                    
         except Exception as e:
             return {
                 'success': False,
@@ -506,46 +566,28 @@ def test_triangulation_from_images():
         else:
             print(f"❌ {result.get('error')}")
     
-    # Wait for triangulation to complete
-    print("\n6. Waiting for tracking and triangulation...")
-    max_wait_time = 120  # seconds
-    check_interval = 2  # seconds
-    elapsed_time = 0
-    
-    while elapsed_time < max_wait_time:
-        status = client.get_session_status(session_id)
-        
-        if not status.get('success'):
-            print(f"❌ Failed to get status: {status.get('error')}")
-            return False
-        
-        session_info = status['session']
-        session_status = session_info['status']
-        progress = session_info['progress']
-        
-        print(f"   Status: {session_status} | Progress: {progress['views_tracked']}/{progress['views_received']} views tracked", end="\r")
-        
-        if session_status == 'completed':
-            print("\n✅ Triangulation completed!")
-            break
-        elif session_status == 'failed':
-            print(f"\n❌ Session failed: {session_info.get('error_message', 'Unknown error')}")
-            return False
-        
-        time.sleep(check_interval)
-        elapsed_time += check_interval
-    
-    if elapsed_time >= max_wait_time:
-        print("\n❌ Timeout waiting for triangulation")
-        return False
-    
-    # Get results
-    print("\n7. Retrieving triangulation results...")
-    result = client.get_result(session_id)
+    # Wait for triangulation to complete and get results
+    print("\n6. Waiting for tracking and triangulation (timeout: 30s)...")
+    result = client.get_result(session_id, timeout=30000)  # 30 seconds
     
     if not result.get('success'):
         print(f"❌ Failed to get result: {result.get('error')}")
         return False
+    
+    # Check if we got the final result or timed out
+    if 'result' not in result:
+        if result.get('timeout'):
+            print("\n❌ Timeout waiting for triangulation")
+        else:
+            session_info = result.get('session', {})
+            session_status = session_info.get('status')
+            if session_status == 'failed':
+                print(f"\n❌ Session failed: {session_info.get('error_message', 'Unknown error')}")
+            else:
+                print(f"\n❌ Triangulation not completed (status: {session_status})")
+        return False
+    
+    print("✅ Triangulation completed!")
     
     triangulation_result = result['result']
     points_3d = np.array(triangulation_result['points_3d'])
