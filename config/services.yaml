@@ -30,6 +30,18 @@ services:
     dependencies: []
     health_endpoint: "/"
     docs_endpoint: null
+    
+  positioning_3d:
+    name: "3D Positioning Service"
+    description: "Multi-view triangulation service for real-time 3D positioning from robot cameras"
+    port: 8004
+    type: "fastapi"
+    path: "web/positioning_3d"
+    dependencies:
+      - "ffpp_keypoint_tracking"
+      - "core.triangulation"
+    health_endpoint: "/health"
+    docs_endpoint: null
 
 # Global settings
 settings:
