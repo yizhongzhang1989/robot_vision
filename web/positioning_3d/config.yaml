@@ -19,7 +19,7 @@ ffpp_server:
 # Dataset Configuration
 dataset:
   path: "output/dataset"  # Default dataset path (override with --dataset-path)
-  auto_upload_on_start: true
+  auto_upload_on_start: false  # Set to true to auto-upload references on startup
   upload_timeout: 60  # seconds per reference
 
 # Task Queue Configuration
