@@ -294,18 +294,30 @@ def handle_tracking_task(task: TrackingTask) -> bool:
     )
     
     if result.get('success'):
-        # Extract tracked keypoints
-        tracked_keypoints = result.get('result', {}).get('tracked_keypoints', [])
+        # Extract tracked keypoints from FFPP result
+        result_data = result.get('result', {})
+        tracked_keypoints = result_data.get('tracked_keypoints', [])
         
-        # Convert to standard format
+        # Convert to standard format with embedded accuracy
         keypoints_2d = []
+        
         for kp in tracked_keypoints:
             if isinstance(kp, list) and len(kp) >= 2:
+                # Old format: [x, y]
                 keypoints_2d.append({'x': float(kp[0]), 'y': float(kp[1])})
-            elif isinstance(kp, dict) and 'x' in kp and 'y' in kp:
-                keypoints_2d.append({'x': float(kp['x']), 'y': float(kp['y'])})
+            elif isinstance(kp, dict):
+                # New format: {'x': x, 'y': y, 'consistency_distance': dist, ...}
+                if 'x' in kp and 'y' in kp:
+                    keypoint_dict = {'x': float(kp['x']), 'y': float(kp['y'])}
+                    
+                    # Embed consistency_distance (smaller is better)
+                    consistency_dist = kp.get('consistency_distance')
+                    if consistency_dist is not None:
+                        keypoint_dict['consistency_distance'] = float(consistency_dist)
+                    
+                    keypoints_2d.append(keypoint_dict)
         
-        # Update view with keypoints
+        # Update view with keypoints (accuracy embedded in each point)
         session_manager.update_view_status(
             task.session_id,
             task.view_id,
@@ -815,10 +827,19 @@ def get_result(session_id: str):
             'error': f'Session not completed yet (status: {session.status.value})'
         }), 400
     
+    # Collect per-view 2D keypoints from tracked views (in upload order)
+    views_data = []
+    for view in session.views:
+        if view.status == ViewStatus.TRACKED and view.keypoints_2d:
+            views_data.append({
+                'keypoints_2d': view.keypoints_2d
+            })
+    
     return jsonify({
         'success': True,
         'session_id': session_id,
         'result': session.result.to_dict() if session.result else None,
+        'views': views_data,
         'timestamp': datetime.now().isoformat()
     })
 

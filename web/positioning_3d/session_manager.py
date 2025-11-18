@@ -155,7 +155,7 @@ class SessionManager:
             session_id: Session identifier
             view_id: View identifier
             status: New view status
-            keypoints_2d: Tracked keypoints (optional)
+            keypoints_2d: Tracked keypoints with embedded accuracy (optional)
             error_message: Error message if failed (optional)
             
         Returns:

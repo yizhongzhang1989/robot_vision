@@ -137,7 +137,7 @@ class FFPPClient:
             # Prepare request
             payload = {
                 'image_base64': image_base64,
-                'bidirectional': False,  # Use forward flow only for speed
+                'bidirectional': True,  # Use bidirectional flow for better accuracy
                 'return_flow': False
             }
             

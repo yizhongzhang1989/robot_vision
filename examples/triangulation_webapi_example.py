@@ -563,6 +563,33 @@ def test_triangulation_from_images():
     if len(points_3d) > 5:
         print(f"   ... and {len(points_3d) - 5} more points")
     
+    # Print per-view 2D keypoints with accuracy metrics (from result)
+    print(f"\n   Number of views in result: {len(result.get('views', []))}")
+    views_data = result.get('views', [])
+    if views_data:
+        print("\n   Per-view 2D keypoints:")
+        for view_idx, view in enumerate(views_data):
+            keypoints_2d = view.get('keypoints_2d', [])
+            print(f"\n   View {view_idx}:")
+            print(f"   Tracked {len(keypoints_2d)} keypoints:")
+            
+            # Show sample keypoints with consistency_distance
+            for i, kp in enumerate(keypoints_2d[:3]):
+                x, y = kp.get('x'), kp.get('y')
+                consistency = kp.get('consistency_distance')
+                if consistency is not None:
+                    print(f"      Point {i}: ({x:.2f}, {y:.2f}) - consistency_distance: {consistency:.3f}px")
+                else:
+                    print(f"      Point {i}: ({x:.2f}, {y:.2f})")
+            
+            if len(keypoints_2d) > 3:
+                print(f"      ... and {len(keypoints_2d) - 3} more points")
+                
+                # Show consistency_distance statistics if available
+                consistencies = [kp.get('consistency_distance') for kp in keypoints_2d if kp.get('consistency_distance') is not None]
+                if consistencies:
+                    print(f"      Consistency distance - mean: {np.mean(consistencies):.3f}px, min: {np.min(consistencies):.3f}px, max: {np.max(consistencies):.3f}px")
+    
     # Clean up: terminate session
     print("\n8. Terminating session...")
     term_result = client.terminate_session(session_id)

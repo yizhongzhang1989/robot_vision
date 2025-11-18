@@ -57,7 +57,7 @@ class View:
     image: Optional[np.ndarray] = None
     image_base64: Optional[str] = None  # For storage/display
     camera_params: Optional[CameraParams] = None
-    keypoints_2d: Optional[List[Dict[str, float]]] = None
+    keypoints_2d: Optional[List[Dict[str, float]]] = None  # [{'x': x, 'y': y, 'consistency_distance': dist}, ...]
     status: ViewStatus = ViewStatus.RECEIVED
     timestamp: datetime = field(default_factory=datetime.now)
     error_message: Optional[str] = None
