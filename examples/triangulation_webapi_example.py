@@ -410,7 +410,7 @@ def test_triangulation_from_images():
     print("=" * 60)
     
     # Configuration
-    test_data_dir = Path("output/dataset/ur_locate_push2end_data/test/test_img_20251118")
+    test_data_dir = Path("dataset/ur_locate_push2end_data/test/test_img_20251118")
     reference_name = "ur_locate_push2end_data"
     
     # Check if test data exists
@@ -598,11 +598,11 @@ def main():
         print("   python web/positioning_3d/app.py --ffpp-url http://msraig-ubuntu-3:8001")
         print("\n2. Check that FFPP server is accessible")
         print("\n3. Verify dataset path contains reference images:")
-        print("   output/dataset/ref_name/ref_img_1.jpg")
-        print("   output/dataset/ref_name/ref_img_1.json")
+        print("   dataset/ref_name/ref_img_1.jpg")
+        print("   dataset/ref_name/ref_img_1.json")
         print("\n4. Verify test images exist:")
-        print("   output/dataset/ur_locate_push2end_data/test/test_img_20251118/*.jpg")
-        print("   output/dataset/ur_locate_push2end_data/test/test_img_20251118/*_pose.json")
+        print("   dataset/ur_locate_push2end_data/test/test_img_20251118/*.jpg")
+        print("   dataset/ur_locate_push2end_data/test/test_img_20251118/*_pose.json")
 
 
 if __name__ == "__main__":
