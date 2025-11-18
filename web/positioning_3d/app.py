@@ -352,6 +352,8 @@ def check_and_trigger_triangulation(session_id: str):
     """
     Check if session is ready for triangulation and trigger if ready.
     
+    Triangulation can be performed when 2 or more views are tracked.
+    
     Args:
         session_id: Session identifier
     """
@@ -361,15 +363,18 @@ def check_and_trigger_triangulation(session_id: str):
     if not session:
         return
     
-    # Check if ready
-    if not session.is_ready_for_triangulation():
-        return
-    
     # Check if already triangulating or completed
     if session.status in [SessionStatus.TRIANGULATING, SessionStatus.COMPLETED]:
         return
     
-    logger.info(f"Session {session_id} ready for triangulation")
+    # Count tracked views
+    tracked_views = [v for v in session.views if v.status == ViewStatus.TRACKED]
+    
+    # Need at least 2 tracked views for triangulation
+    if len(tracked_views) < 2:
+        return
+    
+    logger.info(f"Session {session_id} ready for triangulation with {len(tracked_views)} views")
     
     # Update status
     session_manager.update_session_status(session_id, SessionStatus.TRIANGULATING)
@@ -575,9 +580,7 @@ def init_session():
     
     Request body:
     {
-        "robot_id": "robot_arm_01",
-        "reference_name": "checkerboard_11x8",
-        "num_expected_views": 6
+        "reference_name": "checkerboard_11x8"
     }
     """
     global session_manager, reference_images
@@ -592,17 +595,13 @@ def init_session():
         data = request.get_json()
         
         # Validate required fields
-        required_fields = ['robot_id', 'reference_name', 'num_expected_views']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({
-                    'success': False,
-                    'error': f'Missing required field: {field}'
-                }), 400
+        if 'reference_name' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: reference_name'
+            }), 400
         
-        robot_id = data['robot_id']
         reference_name = data['reference_name']
-        num_expected_views = int(data['num_expected_views'])
         
         # Validate reference exists
         if reference_name not in reference_images:
@@ -612,19 +611,17 @@ def init_session():
                 'available_references': list(reference_images.keys())
             }), 404
         
-        # Create session
+        # Create session (no expected views - open-ended)
         session = session_manager.create_session(
-            robot_id=robot_id,
             reference_name=reference_name,
-            num_expected_views=num_expected_views
+            num_expected_views=0  # 0 means open-ended
         )
         
-        logger.info(f"Created session {session.session_id} for robot {robot_id}")
+        logger.info(f"Created session {session.session_id}")
         
         # Broadcast event
         broadcast_sse_event('session_created', {
-            'session_id': session.session_id,
-            'robot_id': robot_id
+            'session_id': session.session_id
         })
         
         return jsonify({
@@ -855,6 +852,50 @@ def list_sessions():
         'count': len(sessions),
         'timestamp': datetime.now().isoformat()
     })
+
+
+@app.route("/terminate_session/<session_id>", methods=["POST"])
+def terminate_session(session_id: str):
+    """Terminate a session and remove its data."""
+    global session_manager
+    
+    try:
+        session = session_manager.get_session(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'error': f'Session not found: {session_id}'
+            }), 404
+        
+        # Remove session
+        removed = session_manager.remove_session(session_id)
+        
+        if removed:
+            logger.info(f"Terminated session {session_id}")
+            
+            # Broadcast event
+            broadcast_sse_event('session_terminated', {
+                'session_id': session_id
+            })
+            
+            return jsonify({
+                'success': True,
+                'session_id': session_id,
+                'message': 'Session terminated and data removed',
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to remove session'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error terminating session: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route("/list_references")

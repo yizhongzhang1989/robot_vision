@@ -41,17 +41,15 @@ class SessionManager:
     
     def create_session(
         self,
-        robot_id: str,
         reference_name: str,
-        num_expected_views: int
+        num_expected_views: int = 0
     ) -> RobotSession:
         """
         Create a new positioning session.
         
         Args:
-            robot_id: Robot identifier
             reference_name: Reference image name to use
-            num_expected_views: Expected number of camera views
+            num_expected_views: Expected number of camera views (0 = open-ended)
             
         Returns:
             Created RobotSession
@@ -69,12 +67,12 @@ class SessionManager:
                     raise ValueError(f"Maximum concurrent sessions ({self.max_sessions}) reached")
             
             # Generate session ID
-            session_id = f"{robot_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            session_id = f"session_{reference_name}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             
             # Create session
             session = RobotSession(
                 session_id=session_id,
-                robot_id=robot_id,
+                robot_id='default',
                 reference_name=reference_name,
                 num_expected_views=num_expected_views,
                 status=SessionStatus.PENDING
@@ -82,7 +80,7 @@ class SessionManager:
             
             self.sessions[session_id] = session
             
-            logger.info(f"Created session {session_id} for robot '{robot_id}' ({num_expected_views} views expected)")
+            logger.info(f"Created session {session_id} ({num_expected_views} views expected)")
             
             return session
     
@@ -262,6 +260,23 @@ class SessionManager:
         return self.list_sessions(
             status=None
         )
+    
+    def remove_session(self, session_id: str) -> bool:
+        """
+        Remove a session manually.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            True if removed successfully
+        """
+        with self.lock:
+            if session_id in self.sessions:
+                del self.sessions[session_id]
+                logger.info(f"Removed session: {session_id}")
+                return True
+            return False
     
     def cleanup_sessions(self, force_timeout: Optional[timedelta] = None) -> int:
         """

@@ -133,23 +133,19 @@ class PositioningServiceClient:
                 'error': str(e)
             }
     
-    def init_session(self, robot_id: str, reference_name: str, num_expected_views: int) -> Dict:
+    def init_session(self, reference_name: str) -> Dict:
         """
         Initialize a new positioning session.
         
         Args:
-            robot_id: Unique identifier for the robot
             reference_name: Name of the reference image to use
-            num_expected_views: Number of camera views expected
             
         Returns:
             Response with session_id if successful
         """
         try:
             payload = {
-                'robot_id': robot_id,
-                'reference_name': reference_name,
-                'num_expected_views': num_expected_views
+                'reference_name': reference_name
             }
             
             response = self.session.post(
@@ -166,21 +162,18 @@ class PositioningServiceClient:
                 'error': str(e)
             }
     
-    def upload_view(self, session_id: str, view_id: str, image: np.ndarray,
+    def upload_view(self, session_id: str, image: np.ndarray,
                    intrinsic: np.ndarray, extrinsic: np.ndarray,
-                   distortion: Optional[np.ndarray] = None,
-                   image_size: Optional[Tuple[int, int]] = None) -> Dict:
+                   distortion: Optional[np.ndarray] = None) -> Dict:
         """
         Upload a camera view for triangulation.
         
         Args:
             session_id: Session identifier from init_session
-            view_id: Unique identifier for this view
             image: Camera image as numpy array (BGR or RGB)
             intrinsic: 3x3 camera intrinsic matrix
             extrinsic: 4x4 camera extrinsic matrix (camera to world)
             distortion: Distortion coefficients (optional)
-            image_size: Image size as (width, height) (optional, inferred from image)
             
         Returns:
             Response with queue position if successful
@@ -189,10 +182,12 @@ class PositioningServiceClient:
             # Convert image to base64
             image_base64 = image_to_base64(image)
             
-            # Infer image size if not provided
-            if image_size is None:
-                h, w = image.shape[:2]
-                image_size = (w, h)
+            # Get image size from array
+            h, w = image.shape[:2]
+            image_size = (w, h)
+            
+            # Generate unique view_id
+            view_id = f"view_{int(time.time() * 1000000)}"
             
             # Prepare camera parameters
             camera_params = {
@@ -258,6 +253,26 @@ class PositioningServiceClient:
         """
         try:
             response = self.session.get(f"{self.service_url}/result/{session_id}")
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def terminate_session(self, session_id: str) -> Dict:
+        """
+        Terminate a session and remove its data from the server.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Response with success status
+        """
+        try:
+            response = self.session.post(f"{self.service_url}/terminate_session/{session_id}")
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -400,7 +415,6 @@ def test_triangulation_from_images():
     # Configuration
     test_data_dir = Path("output/dataset/ur_locate_push2end_data/test/test_img_20251118")
     reference_name = "ur_locate_push2end_data"
-    robot_id = "test_robot_01"
     
     # Check if test data exists
     if not test_data_dir.exists():
@@ -442,9 +456,7 @@ def test_triangulation_from_images():
     # Initialize session
     print(f"\n4. Initializing session for {len(image_files)} views...")
     session_result = client.init_session(
-        robot_id=robot_id,
-        reference_name=reference_name,
-        num_expected_views=len(image_files)
+        reference_name=reference_name
     )
     
     if not session_result.get('success'):
@@ -478,12 +490,10 @@ def test_triangulation_from_images():
             continue
         
         # Upload view
-        view_id = f"view_{idx}"
-        print(f"   Uploading {img_file.name} as {view_id}...", end=" ")
+        print(f"   Uploading {img_file.name}...", end=" ")
         
         result = client.upload_view(
             session_id=session_id,
-            view_id=view_id,
             image=image,
             intrinsic=intrinsic,
             extrinsic=extrinsic,
@@ -551,6 +561,14 @@ def test_triangulation_from_images():
     
     if len(points_3d) > 5:
         print(f"   ... and {len(points_3d) - 5} more points")
+    
+    # Clean up: terminate session
+    print("\n8. Terminating session...")
+    term_result = client.terminate_session(session_id)
+    if term_result.get('success'):
+        print("✅ Session terminated and cleaned up")
+    else:
+        print(f"⚠️  Failed to terminate session: {term_result.get('error')}")
     
     return True
 
