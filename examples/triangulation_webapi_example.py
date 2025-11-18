@@ -163,8 +163,8 @@ class PositioningServiceClient:
             }
     
     def upload_view(self, session_id: str, image: np.ndarray,
-                   intrinsic: np.ndarray, extrinsic: np.ndarray,
-                   distortion: Optional[np.ndarray] = None) -> Dict:
+                   intrinsic: np.ndarray, distortion: Optional[np.ndarray],
+                   extrinsic: np.ndarray) -> Dict:
         """
         Upload a camera view for triangulation.
         
@@ -172,8 +172,8 @@ class PositioningServiceClient:
             session_id: Session identifier from init_session
             image: Camera image as numpy array (BGR or RGB)
             intrinsic: 3x3 camera intrinsic matrix
+            distortion: Distortion coefficients (optional, can be None)
             extrinsic: 4x4 camera extrinsic matrix (world to camera)
-            distortion: Distortion coefficients (optional)
             
         Returns:
             Response with queue position if successful
@@ -497,8 +497,8 @@ def test_triangulation_from_images():
             session_id=session_id,
             image=image,
             intrinsic=intrinsic,
-            extrinsic=extrinsic,
-            distortion=distortion
+            distortion=distortion,
+            extrinsic=extrinsic
         )
         
         if result.get('success'):
