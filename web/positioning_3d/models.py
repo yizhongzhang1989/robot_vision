@@ -126,7 +126,6 @@ class RobotSession:
     session_id: str
     robot_id: str
     reference_name: str
-    num_expected_views: int
     views: List[View] = field(default_factory=list)
     status: SessionStatus = SessionStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
@@ -146,8 +145,7 @@ class RobotSession:
             'views_tracked': views_tracked,
             'views_failed': views_failed,
             'views_pending': views_received - views_tracked - views_failed,
-            'expected_views': self.num_expected_views,
-            'progress_percent': int((views_tracked / self.num_expected_views * 100)) if self.num_expected_views > 0 else 0
+            'progress_percent': int((views_tracked / views_received * 100)) if views_received > 0 else 0
         }
     
     def is_ready_for_triangulation(self) -> bool:
@@ -161,7 +159,6 @@ class RobotSession:
             'session_id': self.session_id,
             'robot_id': self.robot_id,
             'reference_name': self.reference_name,
-            'num_expected_views': self.num_expected_views,
             'status': self.status.value,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

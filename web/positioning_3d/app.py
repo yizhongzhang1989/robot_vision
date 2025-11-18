@@ -352,7 +352,8 @@ def check_and_trigger_triangulation(session_id: str):
     """
     Check if session is ready for triangulation and trigger if ready.
     
-    Triangulation can be performed when 2 or more views are tracked.
+    Triangulation is triggered when all uploaded views have been processed
+    (either tracked or failed) and at least 2 views were successfully tracked.
     
     Args:
         session_id: Session identifier
@@ -367,14 +368,24 @@ def check_and_trigger_triangulation(session_id: str):
     if session.status in [SessionStatus.TRIANGULATING, SessionStatus.COMPLETED]:
         return
     
-    # Count tracked views
+    # Count view statuses
     tracked_views = [v for v in session.views if v.status == ViewStatus.TRACKED]
+    failed_views = [v for v in session.views if v.status == ViewStatus.FAILED]
+    pending_views = [v for v in session.views if v.status in [ViewStatus.RECEIVED, ViewStatus.QUEUED, ViewStatus.TRACKING]]
+    
+    # Wait until all views are processed (no pending views)
+    if len(pending_views) > 0:
+        logger.debug(f"Session {session_id}: {len(pending_views)} views still pending, waiting...")
+        return
     
     # Need at least 2 tracked views for triangulation
     if len(tracked_views) < 2:
+        error_msg = f"Insufficient tracked views for triangulation: {len(tracked_views)}/2 minimum"
+        logger.error(f"Session {session_id}: {error_msg}")
+        session_manager.update_session_status(session_id, SessionStatus.FAILED, error_msg)
         return
     
-    logger.info(f"Session {session_id} ready for triangulation with {len(tracked_views)} views")
+    logger.info(f"Session {session_id} ready for triangulation with {len(tracked_views)} views ({len(failed_views)} failed)")
     
     # Update status
     session_manager.update_session_status(session_id, SessionStatus.TRIANGULATING)
@@ -611,10 +622,9 @@ def init_session():
                 'available_references': list(reference_images.keys())
             }), 404
         
-        # Create session (no expected views - open-ended)
+        # Create session
         session = session_manager.create_session(
-            reference_name=reference_name,
-            num_expected_views=0  # 0 means open-ended
+            reference_name=reference_name
         )
         
         logger.info(f"Created session {session.session_id}")

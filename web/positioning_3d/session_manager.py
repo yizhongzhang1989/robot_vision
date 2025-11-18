@@ -41,15 +41,13 @@ class SessionManager:
     
     def create_session(
         self,
-        reference_name: str,
-        num_expected_views: int = 0
+        reference_name: str
     ) -> RobotSession:
         """
         Create a new positioning session.
         
         Args:
             reference_name: Reference image name to use
-            num_expected_views: Expected number of camera views (0 = open-ended)
             
         Returns:
             Created RobotSession
@@ -74,13 +72,12 @@ class SessionManager:
                 session_id=session_id,
                 robot_id='default',
                 reference_name=reference_name,
-                num_expected_views=num_expected_views,
                 status=SessionStatus.PENDING
             )
             
             self.sessions[session_id] = session
             
-            logger.info(f"Created session {session_id} ({num_expected_views} views expected)")
+            logger.info(f"Created session {session_id}")
             
             return session
     
@@ -139,7 +136,7 @@ class SessionManager:
             if session.status == SessionStatus.PENDING:
                 session.status = SessionStatus.PROCESSING
             
-            logger.info(f"Added view {view_id} to session {session_id} ({len(session.views)}/{session.num_expected_views})")
+            logger.info(f"Added view {view_id} to session {session_id} (total views: {len(session.views)})")
             
             return view
     

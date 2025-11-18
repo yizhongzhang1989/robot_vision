@@ -172,7 +172,7 @@ class PositioningServiceClient:
             session_id: Session identifier from init_session
             image: Camera image as numpy array (BGR or RGB)
             intrinsic: 3x3 camera intrinsic matrix
-            extrinsic: 4x4 camera extrinsic matrix (camera to world)
+            extrinsic: 4x4 camera extrinsic matrix (world to camera)
             distortion: Distortion coefficients (optional)
             
         Returns:
@@ -315,7 +315,7 @@ def load_camera_params_from_json(json_path: str) -> Tuple[np.ndarray, np.ndarray
         
     Returns:
         Tuple of (intrinsic_matrix, distortion_coeffs, extrinsic_matrix)
-        where extrinsic = end2base @ cam2end_matrix
+        where extrinsic is world2cam (base2cam) for triangulation
     """
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -330,8 +330,12 @@ def load_camera_params_from_json(json_path: str) -> Tuple[np.ndarray, np.ndarray
     end2base = np.array(data['end2base'], dtype=np.float64)
     cam2end = np.array(data['cam2end_matrix'], dtype=np.float64)
     
-    # Calculate extrinsic: cam2base = end2base @ cam2end
-    extrinsic = end2base @ cam2end
+    # Calculate cam2base (camera to world/base)
+    cam2base = end2base @ cam2end
+    
+    # Triangulation expects world2cam (world to camera), so invert
+    # base2cam = inv(cam2base)
+    extrinsic = np.linalg.inv(cam2base)
     
     return intrinsic, distortion, extrinsic
 
@@ -451,7 +455,7 @@ def test_triangulation_from_images():
     print(f"✅ Reference '{reference_name}' is loaded")
     
     # Initialize session
-    print(f"\n4. Initializing session for {len(image_files)} views...")
+    print(f"\n4. Initializing session...")
     session_result = client.init_session(
         reference_name=reference_name
     )
@@ -519,7 +523,7 @@ def test_triangulation_from_images():
         session_status = session_info['status']
         progress = session_info['progress']
         
-        print(f"   Status: {session_status} | Progress: {progress['views_tracked']}/{progress['expected_views']} views tracked", end="\r")
+        print(f"   Status: {session_status} | Progress: {progress['views_tracked']}/{progress['views_received']} views tracked", end="\r")
         
         if session_status == 'completed':
             print("\n✅ Triangulation completed!")
