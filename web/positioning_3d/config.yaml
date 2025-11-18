@@ -1,0 +1,46 @@
+# 3D Positioning Service Configuration
+# ====================================
+
+service:
+  name: "3D Positioning Service"
+  port: 8004
+  host: "0.0.0.0"
+  debug: false
+
+# FFPP Server Configuration
+ffpp_server:
+  host: "msraig-ubuntu-3"  # Default remote host (can override with --ffpp-url)
+  port: 8001
+  timeout: 30
+  retry_attempts: 1  # Reduced for faster startup during testing
+  connection_retry_delay: 2  # seconds
+  required: false  # Set to false to allow startup without FFPP (for testing)
+
+# Dataset Configuration
+dataset:
+  path: "output/dataset"  # Default dataset path (override with --dataset-path)
+  auto_upload_on_start: true
+  upload_timeout: 60  # seconds per reference
+
+# Task Queue Configuration
+queue:
+  max_size: 100
+  worker_threads: 1  # Keep at 1 for FFPP serialization
+
+# Session Configuration
+session:
+  timeout_minutes: 30
+  max_concurrent_sessions: 50
+  cleanup_interval_seconds: 300  # Run cleanup every 5 minutes
+  keep_completed_hours: 1  # Keep completed sessions for 1 hour
+
+# Storage Configuration
+storage:
+  images_dir: "output/positioning_images"
+  results_dir: "output/positioning_results"
+  keep_images_days: 7
+
+# Logging Configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
