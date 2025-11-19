@@ -39,7 +39,7 @@ if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
 # Import triangulation module (from robot_vision/core)
-from core.triangulation import triangulate_multiview
+from core.triangulation import triangulate_multiview, triangulate_view_plane
 
 
 def load_chessboard_test_data():
@@ -528,6 +528,171 @@ def run_triangulation_with_undistorted_points(view_data, visualize=False):
     }
 
 
+def run_view_plane_triangulation(view_data, visualize=False):
+    """
+    Run triangulation test using single view with plane intersection.
+    
+    Uses the first view of the chessboard calibration data and projects
+    2D points onto the chessboard plane (Z=0 in chessboard frame).
+    
+    Args:
+        view_data: List of view dicts from load_chessboard_test_data()
+        visualize: If True, display 3D visualization of projected points and camera
+    
+    Returns:
+        Dict containing test results
+    """
+    print("\n" + "=" * 80)
+    print("View-Plane Triangulation Test")
+    print("=" * 80)
+    
+    # Use first view only
+    first_view = view_data[0]
+    
+    # Define chessboard plane (Z=0 in chessboard frame, which is our world frame)
+    plane_point = np.array([0.0, 0.0, 0.0])  # Origin on the plane
+    plane_normal = np.array([0.0, 0.0, 1.0])  # Normal pointing up (Z-axis)
+    
+    print(f"[+] Using first view with {len(first_view['points_2d'])} 2D points")
+    print(f"   Plane point: {plane_point}")
+    print(f"   Plane normal: {plane_normal}")
+    
+    # Triangulate to plane
+    try:
+        result = triangulate_view_plane(
+            view_data=first_view,
+            plane_point=plane_point,
+            plane_normal=plane_normal
+        )
+    except Exception as e:
+        error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        print(f"[-] Exception in triangulate_view_plane(): {error_msg}")
+        import traceback
+        traceback.print_exc()
+        return {'error': error_msg}
+    
+    if not result['success']:
+        print(f"[-] Triangulation failed: {result.get('error_message', 'Unknown error')}")
+        return {'error': result.get('error_message', 'Unknown error')}
+    
+    points_3d = result['points_3d']
+    distances = result['distances']
+    
+    # Count valid points (non-zero)
+    valid_mask = np.linalg.norm(points_3d, axis=1) > 1e-6
+    num_valid = np.sum(valid_mask)
+    num_invalid = len(points_3d) - num_valid
+    
+    print(f"[+] Projected {num_valid} valid points onto plane")
+    if num_invalid > 0:
+        print(f"   {num_invalid} points were invalid (parallel or behind camera)")
+    
+    # Verify points are on the plane
+    if num_valid > 0:
+        valid_points = points_3d[valid_mask]
+        z_coords = valid_points[:, 2]
+        max_z_deviation = np.max(np.abs(z_coords))
+        mean_distance = np.mean(distances[valid_mask])
+        
+        print(f"   Max Z deviation from plane: {max_z_deviation:.6f} m")
+        print(f"   Mean distance from camera: {mean_distance:.3f} m")
+        
+        # Show a few sample points
+        print("\n   Sample 3D points:")
+        for i in range(min(5, num_valid)):
+            idx = np.where(valid_mask)[0][i]
+            print(f"     Point {idx}: ({points_3d[idx, 0]:.4f}, {points_3d[idx, 1]:.4f}, {points_3d[idx, 2]:.4f})")
+    
+    # ========================================
+    # VISUALIZATION
+    # ========================================
+    
+    if visualize and num_valid > 0:
+        try:
+            import matplotlib
+            matplotlib.use('TkAgg')
+            import matplotlib.pyplot as plt
+            from mpl_toolkits.mplot3d import Axes3D
+            
+            valid_points = points_3d[valid_mask]
+            
+            # Calculate camera center
+            extrinsic = np.array(first_view['extrinsic'])
+            R = extrinsic[:3, :3]
+            t = extrinsic[:3, 3]
+            camera_center = -R.T @ t
+            
+            fig = plt.figure(figsize=(14, 10))
+            ax = fig.add_subplot(111, projection='3d')
+            
+            # Plot projected 3D points
+            ax.scatter(valid_points[:, 0], valid_points[:, 1], valid_points[:, 2],
+                      c='blue', marker='o', s=30, label='Projected Points', alpha=0.8)
+            
+            # Plot camera position
+            ax.scatter([camera_center[0]], [camera_center[1]], [camera_center[2]],
+                      c='red', marker='^', s=150, label='Camera Position', 
+                      edgecolors='black', linewidths=2)
+            
+            # Draw plane (grid)
+            x_range = valid_points[:, 0].max() - valid_points[:, 0].min()
+            y_range = valid_points[:, 1].max() - valid_points[:, 1].min()
+            max_range = max(x_range, y_range)
+            
+            x_center = (valid_points[:, 0].max() + valid_points[:, 0].min()) / 2
+            y_center = (valid_points[:, 1].max() + valid_points[:, 1].min()) / 2
+            
+            x_grid = np.linspace(x_center - max_range/2, x_center + max_range/2, 10)
+            y_grid = np.linspace(y_center - max_range/2, y_center + max_range/2, 10)
+            X_grid, Y_grid = np.meshgrid(x_grid, y_grid)
+            Z_grid = np.zeros_like(X_grid)  # Z=0 plane
+            
+            ax.plot_surface(X_grid, Y_grid, Z_grid, alpha=0.2, color='green', label='Chessboard Plane')
+            
+            # Draw lines from camera to some points
+            for i in range(min(10, num_valid)):
+                idx = np.where(valid_mask)[0][i]
+                point = points_3d[idx]
+                ax.plot([camera_center[0], point[0]],
+                       [camera_center[1], point[1]],
+                       [camera_center[2], point[2]],
+                       'r--', alpha=0.2, linewidth=1)
+            
+            # Set labels and title
+            ax.set_xlabel('X (m)', fontsize=12)
+            ax.set_ylabel('Y (m)', fontsize=12)
+            ax.set_zlabel('Z (m)', fontsize=12)
+            ax.set_title(f'View-Plane Triangulation Result\n{num_valid} points projected onto chessboard plane (Z=0)',
+                        fontsize=14, fontweight='bold')
+            ax.legend(fontsize=11)
+            
+            # Set equal aspect ratio
+            max_range_plot = max(x_range, y_range, camera_center[2]) / 1.5
+            ax.set_xlim(x_center - max_range_plot, x_center + max_range_plot)
+            ax.set_ylim(y_center - max_range_plot, y_center + max_range_plot)
+            ax.set_zlim(-0.1, camera_center[2] + 0.1)
+            
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+            
+            print("[+] Visualization closed")
+            
+        except ImportError as e:
+            print(f"[!] Could not create visualization: matplotlib not available ({str(e).encode('ascii', 'replace').decode('ascii')})")
+        except Exception as e:
+            print(f"[!] Visualization error: {str(e).encode('ascii', 'replace').decode('ascii')}")
+            import traceback
+            traceback.print_exc()
+    
+    return {
+        'num_valid': num_valid,
+        'num_invalid': num_invalid,
+        'max_z_deviation': max_z_deviation if num_valid > 0 else None,
+        'points_3d': points_3d
+    }
+
+
 def test_error_handling():
     """
     Test error handling with various invalid inputs.
@@ -771,7 +936,24 @@ def main():
             print(f"Test 2 (pre-undistorted, no model):  {undistorted_result['mean_reprojection_error']:.3f} px")
             print(f"Difference:                          {abs(example_result['mean_reprojection_error'] - undistorted_result['mean_reprojection_error']):.3f} px")
         
-        # Test 3: Error handling tests
+        # Test 3: View-plane triangulation
+        view_plane_result = run_view_plane_triangulation(
+            view_data=view_data,
+            visualize=args.visualize
+        )
+        
+        if 'error' in view_plane_result:
+            print(f"\n[!] Test 3 completed with issues: {view_plane_result['error']}")
+        else:
+            print("\n[+] Test 3 completed successfully!")
+            print("\nTest 3 Results:")
+            print(f"  - Projected {view_plane_result['num_valid']} valid points onto plane")
+            if view_plane_result['num_invalid'] > 0:
+                print(f"  - {view_plane_result['num_invalid']} invalid points")
+            if view_plane_result['max_z_deviation'] is not None:
+                print(f"  - Max Z deviation: {view_plane_result['max_z_deviation']:.6f} m")
+        
+        # Test 4: Error handling tests
         test_error_handling()
         
         sys.exit(0)
