@@ -238,90 +238,30 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
-    def get_result(self, session_id: str, timeout: int = 0) -> Dict:
+    def get_result(self, session_id: str, timeout: int = 30000) -> Dict:
         """
         Get triangulation result for a session.
         
+        Triggers on-demand triangulation if not already completed.
+        Server will wait for pending views to be tracked before triangulation.
+        
         Args:
             session_id: Session identifier
-            timeout: Maximum wait time in milliseconds. If 0, return immediately.
-                    If > 0, wait up to timeout ms for completion.
+            timeout: Maximum wait time in milliseconds for view tracking and triangulation.
+                    Default: 30000ms (30 seconds)
             
         Returns:
             Triangulation result with 3D points and per-view keypoints.
-            If not completed and timeout=0, returns session status instead.
-            If insufficient views, returns error immediately without waiting.
         """
         try:
-            # First check session status
-            status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
-            status_response.raise_for_status()
-            status_data = status_response.json()
-            
-            if not status_data.get('success'):
-                return status_data
-            
-            session_info = status_data.get('session', {})
-            session_status = session_info.get('status')
-            progress = session_info.get('progress', {})
-            views_received = progress.get('views_received', 0)
-            
-            # If there are insufficient views, fail immediately without waiting
-            if views_received < 2:
-                return {
-                    'success': False,
-                    'error': f'Insufficient views for triangulation (have {views_received}, need at least 2). Check if view uploads succeeded.',
-                    'session': session_info
-                }
-            
-            if timeout == 0:
-                if session_status != 'completed':
-                    # Return status if not completed
-                    return status_data
-                
-                # Get result if completed
-                response = self.session.get(f"{self.service_url}/result/{session_id}")
-                response.raise_for_status()
-                return response.json()
-            else:
-                # Wait for completion with timeout
-                start_time = time.time() * 1000  # Convert to ms
-                check_interval = 100  # ms
-                
-                while True:
-                    elapsed = (time.time() * 1000) - start_time
-                    
-                    if elapsed >= timeout:
-                        # Timeout - return current status
-                        status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
-                        status_response.raise_for_status()
-                        status_data = status_response.json()
-                        if status_data.get('success'):
-                            status_data['timeout'] = True
-                        return status_data
-                    
-                    # Check status
-                    status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
-                    status_response.raise_for_status()
-                    status_data = status_response.json()
-                    
-                    if not status_data.get('success'):
-                        return status_data
-                    
-                    session_info = status_data.get('session', {})
-                    session_status = session_info.get('status')
-                    
-                    if session_status == 'completed':
-                        # Get result
-                        response = self.session.get(f"{self.service_url}/result/{session_id}")
-                        response.raise_for_status()
-                        return response.json()
-                    elif session_status == 'failed':
-                        # Return failure status
-                        return status_data
-                    
-                    # Wait before next check
-                    time.sleep(check_interval / 1000.0)
+            # Call server endpoint with timeout parameter
+            # Server will trigger triangulation and wait for tracking
+            response = self.session.get(
+                f"{self.service_url}/result/{session_id}",
+                params={'timeout': timeout}
+            )
+            response.raise_for_status()
+            return response.json()
                     
         except Exception as e:
             return {
