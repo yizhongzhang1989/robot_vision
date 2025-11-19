@@ -1149,12 +1149,7 @@ def initialize_service(ffpp_url: Optional[str] = None, dataset_path: Optional[st
     cleanup_thread = threading.Thread(target=cleanup_loop, daemon=True, name="SessionCleanup")
     cleanup_thread.start()
     
-    logger.info("=" * 60)
-    logger.info("✅ 3D Positioning Service Ready!")
-    logger.info(f"🌐 Access at: http://localhost:{config['service']['port']}")
-    logger.info(f"📊 Dashboard: http://localhost:{config['service']['port']}/")
-    logger.info(f"🔧 References loaded: {len(reference_images)}")
-    logger.info("=" * 60)
+    logger.info("Service initialization complete. References loaded: %d", len(reference_images))
 
 
 if __name__ == "__main__":
@@ -1200,6 +1195,12 @@ if __name__ == "__main__":
     port = args.port or service_config.get('port', 8004)
     debug = service_config.get('debug', False)
     
+    logger.info("=" * 60)
+    logger.info("✅ 3D Positioning Service Ready!")
+    logger.info(f"🌐 Access at: http://localhost:{port}")
+    logger.info(f"📊 Dashboard: http://localhost:{port}/")
+    logger.info(f"🔧 References loaded: {len(reference_images)}")
+    logger.info("=" * 60)
     logger.info(f"Starting Flask server on {host}:{port}")
     
     app.run(

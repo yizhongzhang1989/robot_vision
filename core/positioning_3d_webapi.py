@@ -250,20 +250,31 @@ class Positioning3DWebAPIClient:
         Returns:
             Triangulation result with 3D points and per-view keypoints.
             If not completed and timeout=0, returns session status instead.
+            If insufficient views, returns error immediately without waiting.
         """
         try:
+            # First check session status
+            status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+            status_response.raise_for_status()
+            status_data = status_response.json()
+            
+            if not status_data.get('success'):
+                return status_data
+            
+            session_info = status_data.get('session', {})
+            session_status = session_info.get('status')
+            progress = session_info.get('progress', {})
+            views_received = progress.get('views_received', 0)
+            
+            # If there are insufficient views, fail immediately without waiting
+            if views_received < 2:
+                return {
+                    'success': False,
+                    'error': f'Insufficient views for triangulation (have {views_received}, need at least 2). Check if view uploads succeeded.',
+                    'session': session_info
+                }
+            
             if timeout == 0:
-                # Check if completed first
-                status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
-                status_response.raise_for_status()
-                status_data = status_response.json()
-                
-                if not status_data.get('success'):
-                    return status_data
-                
-                session_info = status_data.get('session', {})
-                session_status = session_info.get('status')
-                
                 if session_status != 'completed':
                     # Return status if not completed
                     return status_data
@@ -373,25 +384,43 @@ def load_camera_params_from_json(json_path: str) -> Tuple[np.ndarray, np.ndarray
     Returns:
         Tuple of (intrinsic_matrix, distortion_coeffs, extrinsic_matrix)
         where extrinsic is world2cam (base2cam) for triangulation
+        
+    Raises:
+        ValueError: If JSON is malformed or missing required fields
     """
-    with open(json_path, 'r') as f:
-        data = json.load(f)
+    try:
+        with open(json_path, 'r') as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in {json_path}: {e.msg} at line {e.lineno}")
+    except Exception as e:
+        raise ValueError(f"Failed to read {json_path}: {str(e)}")
     
-    # Extract camera matrix (intrinsic)
-    intrinsic = np.array(data['camera_matrix'], dtype=np.float64)
+    # Validate required fields
+    required_fields = ['camera_matrix', 'distortion_coefficients', 'end2base', 'cam2end_matrix']
+    missing_fields = [f for f in required_fields if f not in data]
+    if missing_fields:
+        raise ValueError(f"Missing required fields in {json_path}: {', '.join(missing_fields)}")
     
-    # Extract distortion coefficients
-    distortion = np.array(data['distortion_coefficients'], dtype=np.float64)
-    
-    # Extract transformation matrices
-    end2base = np.array(data['end2base'], dtype=np.float64)
-    cam2end = np.array(data['cam2end_matrix'], dtype=np.float64)
-    
-    # Calculate cam2base (camera to world/base)
-    cam2base = end2base @ cam2end
-    
-    # Triangulation expects world2cam (world to camera), so invert
-    # base2cam = inv(cam2base)
-    extrinsic = np.linalg.inv(cam2base)
-    
-    return intrinsic, distortion, extrinsic
+    try:
+        # Extract camera matrix (intrinsic)
+        intrinsic = np.array(data['camera_matrix'], dtype=np.float64)
+        
+        # Extract distortion coefficients
+        distortion = np.array(data['distortion_coefficients'], dtype=np.float64)
+        
+        # Extract transformation matrices
+        end2base = np.array(data['end2base'], dtype=np.float64)
+        cam2end = np.array(data['cam2end_matrix'], dtype=np.float64)
+        
+        # Calculate cam2base (camera to world/base)
+        cam2base = end2base @ cam2end
+        
+        # Triangulation expects world2cam (world to camera), so invert
+        # base2cam = inv(cam2base)
+        extrinsic = np.linalg.inv(cam2base)
+        
+        return intrinsic, distortion, extrinsic
+        
+    except (KeyError, ValueError, TypeError) as e:
+        raise ValueError(f"Failed to parse camera parameters from {json_path}: {str(e)}")
