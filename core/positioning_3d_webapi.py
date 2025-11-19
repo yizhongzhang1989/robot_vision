@@ -329,6 +329,111 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
+    def get_result_view_plane(self, session_id: str, plane_point: np.ndarray,
+                             plane_normal: np.ndarray, timeout: int = 0) -> Dict:
+        """
+        Get view-plane triangulation result for a single-view session.
+        
+        Projects 2D points from a single camera view onto a known 3D plane
+        by intersecting camera rays with the plane.
+        
+        Args:
+            session_id: Session identifier
+            plane_point: 3D point on the plane in world coordinates (shape: (3,))
+            plane_normal: Normal vector of the plane (shape: (3,))
+            timeout: Maximum wait time in milliseconds. If 0, return immediately.
+                    If > 0, wait up to timeout ms for view to be tracked.
+            
+        Returns:
+            View-plane triangulation result with 3D points on the plane.
+            If not completed and timeout=0, returns session status instead.
+            If more than one view uploaded, returns error.
+        """
+        try:
+            # First check session status
+            status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+            status_response.raise_for_status()
+            status_data = status_response.json()
+            
+            if not status_data.get('success'):
+                return status_data
+            
+            session_info = status_data.get('session', {})
+            session_status = session_info.get('status')
+            progress = session_info.get('progress', {})
+            views_received = progress.get('views_received', 0)
+            
+            # Check that exactly 1 view is uploaded
+            if views_received == 0:
+                return {
+                    'success': False,
+                    'error': 'No views uploaded for view-plane triangulation',
+                    'session': session_info
+                }
+            elif views_received > 1:
+                return {
+                    'success': False,
+                    'error': f'View-plane triangulation requires exactly 1 view, but {views_received} views were uploaded',
+                    'session': session_info
+                }
+            
+            # Wait for tracking to complete if timeout specified
+            if timeout > 0:
+                start_time = time.time() * 1000  # Convert to ms
+                check_interval = 100  # ms
+                
+                while True:
+                    elapsed = (time.time() * 1000) - start_time
+                    
+                    if elapsed >= timeout:
+                        # Timeout - return current status
+                        status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+                        status_response.raise_for_status()
+                        status_data = status_response.json()
+                        if status_data.get('success'):
+                            status_data['timeout'] = True
+                        return status_data
+                    
+                    # Check if tracking is complete
+                    status_response = self.session.get(f"{self.service_url}/session_status/{session_id}")
+                    status_response.raise_for_status()
+                    status_data = status_response.json()
+                    
+                    if not status_data.get('success'):
+                        return status_data
+                    
+                    session_info = status_data.get('session', {})
+                    progress = session_info.get('progress', {})
+                    views_tracked = progress.get('views_tracked', 0)
+                    
+                    if views_tracked >= 1:
+                        # Tracking complete, proceed to triangulation
+                        break
+                    
+                    # Wait before next check
+                    time.sleep(check_interval / 1000.0)
+            
+            # Call view-plane triangulation endpoint
+            payload = {
+                'session_id': session_id,
+                'plane_point': plane_point.tolist(),
+                'plane_normal': plane_normal.tolist()
+            }
+            
+            response = self.session.post(
+                f"{self.service_url}/result_view_plane",
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     def terminate_session(self, session_id: str) -> Dict:
         """
         Terminate a session and remove its data from the server.

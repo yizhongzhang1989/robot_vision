@@ -48,7 +48,7 @@ from task_queue import TaskQueueManager
 from session_manager import SessionManager
 
 # Import triangulation core
-from core.triangulation import triangulate_multiview
+from core.triangulation import triangulate_multiview, triangulate_view_plane
 
 # Configure logging
 logging.basicConfig(
@@ -842,6 +842,143 @@ def get_result(session_id: str):
         'views': views_data,
         'timestamp': datetime.now().isoformat()
     })
+
+
+@app.route("/result_view_plane", methods=["POST"])
+def get_result_view_plane():
+    """
+    Get view-plane triangulation result for a single-view session.
+    
+    Projects 2D points from a single camera view onto a known 3D plane.
+    """
+    global session_manager
+    
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        plane_point = data.get('plane_point')
+        plane_normal = data.get('plane_normal')
+        
+        # Validate input
+        if not session_id:
+            return jsonify({
+                'success': False,
+                'error': 'Missing session_id'
+            }), 400
+        
+        if plane_point is None or plane_normal is None:
+            return jsonify({
+                'success': False,
+                'error': 'Missing plane_point or plane_normal'
+            }), 400
+        
+        # Convert to numpy arrays
+        plane_point = np.array(plane_point, dtype=np.float64)
+        plane_normal = np.array(plane_normal, dtype=np.float64)
+        
+        # Validate shapes
+        if plane_point.shape != (3,):
+            return jsonify({
+                'success': False,
+                'error': f'plane_point must have shape (3,), got {plane_point.shape}'
+            }), 400
+        
+        if plane_normal.shape != (3,):
+            return jsonify({
+                'success': False,
+                'error': f'plane_normal must have shape (3,), got {plane_normal.shape}'
+            }), 400
+        
+        # Get session
+        session = session_manager.get_session(session_id)
+        if not session:
+            return jsonify({
+                'success': False,
+                'error': f'Session not found: {session_id}'
+            }), 404
+        
+        # Check that exactly 1 view is uploaded
+        tracked_views = [v for v in session.views if v.status == ViewStatus.TRACKED and v.keypoints_2d]
+        
+        if len(tracked_views) == 0:
+            return jsonify({
+                'success': False,
+                'error': 'No tracked views available. Wait for tracking to complete.'
+            }), 400
+        
+        if len(tracked_views) > 1:
+            return jsonify({
+                'success': False,
+                'error': f'View-plane triangulation requires exactly 1 view, but {len(tracked_views)} views were tracked'
+            }), 400
+        
+        # Get the single view
+        view = tracked_views[0]
+        
+        # Prepare view data for triangulation
+        points_2d = np.array([[kp['x'], kp['y']] for kp in view.keypoints_2d])
+        
+        view_dict = {
+            'points_2d': points_2d,
+            'image_size': view.camera_params.image_size,
+            'intrinsic': view.camera_params.intrinsic,
+            'extrinsic': view.camera_params.extrinsic
+        }
+        
+        # Add distortion if available
+        if view.camera_params.distortion is not None:
+            view_dict['distortion'] = view.camera_params.distortion
+        
+        logger.info(f"View-plane triangulation: {len(points_2d)} points onto plane")
+        
+        # Call view-plane triangulation
+        start_time = time.time()
+        result = triangulate_view_plane(
+            view_data=view_dict,
+            plane_point=plane_point,
+            plane_normal=plane_normal
+        )
+        processing_time = time.time() - start_time
+        
+        if not result.get('success'):
+            return jsonify({
+                'success': False,
+                'error': result.get('error_message', 'View-plane triangulation failed')
+            }), 500
+        
+        # Extract results
+        points_3d = result['points_3d']
+        distances = result['distances']
+        
+        # Collect per-view 2D keypoints
+        views_data = [{
+            'keypoints_2d': view.keypoints_2d
+        }]
+        
+        logger.info(f"✅ View-plane triangulation completed: {len(points_3d)} points")
+        
+        return jsonify({
+            'success': True,
+            'session_id': session_id,
+            'result': {
+                'points_3d': points_3d.tolist(),
+                'distances': distances.tolist(),
+                'processing_time': processing_time,
+                'plane_point': plane_point.tolist(),
+                'plane_normal': plane_normal.tolist()
+            },
+            'views': views_data,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in view-plane triangulation: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 @app.route("/queue_status")
