@@ -831,41 +831,40 @@ def get_result(session_id: str):
     # Get timeout from query parameter (default: 30 seconds)
     timeout_ms = int(request.args.get('timeout', 30000))
     
-    # Trigger triangulation if not already completed
-    if session.status != SessionStatus.COMPLETED:
-        success = trigger_triangulation(session_id, wait_for_tracking=True, timeout_ms=timeout_ms)
-        
-        if not success:
-            # Check why it failed
-            tracked_views = [v for v in session.views if v.status == ViewStatus.TRACKED]
-            pending_views = [v for v in session.views if v.status in [ViewStatus.RECEIVED, ViewStatus.QUEUED, ViewStatus.TRACKING]]
-            
-            if len(tracked_views) < 2:
-                return jsonify({
-                    'success': False,
-                    'error': f'Insufficient tracked views for triangulation (have {len(tracked_views)}, need at least 2)',
-                    'session': session.to_dict(include_views=True, include_images=False)
-                }), 400
-            elif len(pending_views) > 0:
-                return jsonify({
-                    'success': False,
-                    'error': f'Timeout waiting for {len(pending_views)} views to be tracked',
-                    'session': session.to_dict(include_views=True, include_images=False)
-                }), 408
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'Triangulation failed',
-                    'session': session.to_dict(include_views=True, include_images=False)
-                }), 500
+    # Always trigger triangulation (allows re-triangulation with new views)
+    success = trigger_triangulation(session_id, wait_for_tracking=True, timeout_ms=timeout_ms)
     
-    # Check if triangulation completed successfully
+    if not success:
+        # Check why it failed
+        tracked_views = [v for v in session.views if v.status == ViewStatus.TRACKED]
+        pending_views = [v for v in session.views if v.status in [ViewStatus.RECEIVED, ViewStatus.QUEUED, ViewStatus.TRACKING]]
+        
+        if len(tracked_views) < 2:
+            return jsonify({
+                'success': False,
+                'error': f'Insufficient tracked views for triangulation (have {len(tracked_views)}, need at least 2)',
+                'session': session.to_dict(include_views=True, include_images=False)
+            })
+        elif len(pending_views) > 0:
+            return jsonify({
+                'success': False,
+                'error': f'Timeout waiting for {len(pending_views)} views to be tracked',
+                'session': session.to_dict(include_views=True, include_images=False)
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Triangulation failed',
+                'session': session.to_dict(include_views=True, include_images=False)
+            })
+    
+    # Check if triangulation completed successfully (should always be true if success=True)
     if session.status != SessionStatus.COMPLETED:
         return jsonify({
             'success': False,
             'error': f'Triangulation did not complete (status: {session.status.value})',
             'session': session.to_dict(include_views=True, include_images=False)
-        }), 500
+        })
     
     # Collect per-view 2D keypoints from tracked views (in upload order)
     views_data = []
