@@ -16,6 +16,7 @@ import time
 import numpy as np
 import cv2
 from pathlib import Path
+import threading
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -83,7 +84,7 @@ def test_upload_references():
         return False
 
 
-def test_triangulation_from_images():
+def test_triangulation_from_images(test_data_dir=None):
     """
     Test function: Upload images and perform triangulation.
     
@@ -92,14 +93,34 @@ def test_triangulation_from_images():
     2. Upload multiple camera views with pose data
     3. Wait for tracking and triangulation
     4. Retrieve results
+    
+    Args:
+        test_data_dir: Path to test data directory (default: dataset/ur_locate_push2end_data/test/test_img_20251118)
     """
     print("\n" + "=" * 60)
     print("Test: Triangulation from Images")
     print("=" * 60)
     
     # Configuration
-    test_data_dir = Path("dataset/ur_locate_push2end_data/test/test_img_20251118")
-    reference_name = "ur_locate_push2end_data"
+    if test_data_dir is None:
+        test_data_dir = Path("dataset/ur_locate_push2end_data/test/test_img_20251118")
+    else:
+        test_data_dir = Path(test_data_dir)
+    
+    # Extract reference_name from test_data_dir
+    # Assuming structure: dataset/reference_name/test/...
+    # We want to extract "reference_name" part
+    parts = test_data_dir.parts
+    if 'dataset' in parts:
+        dataset_idx = parts.index('dataset')
+        if dataset_idx + 1 < len(parts):
+            reference_name = parts[dataset_idx + 1]
+        else:
+            print("❌ Cannot extract reference_name from test_data_dir")
+            return False
+    else:
+        print("❌ test_data_dir should contain 'dataset' in path")
+        return False
     
     # Check if test data exists
     if not test_data_dir.exists():
@@ -194,77 +215,222 @@ def test_triangulation_from_images():
     print("\n6. Waiting for tracking and triangulation (timeout: 30s)...")
     result = client.get_result(session_id, timeout=30000)  # 30 seconds
     
-    if not result.get('success'):
-        print(f"❌ Failed to get result: {result.get('error')}")
-        return False
-    
-    # Check if we got the final result or timed out
-    if 'result' not in result:
-        if result.get('timeout'):
-            print("\n❌ Timeout waiting for triangulation")
-        else:
-            session_info = result.get('session', {})
-            session_status = session_info.get('status')
-            if session_status == 'failed':
-                print(f"\n❌ Session failed: {session_info.get('error_message', 'Unknown error')}")
+    success = False
+    try:
+        if not result.get('success'):
+            print(f"❌ Failed to get result: {result.get('error')}")
+            return False
+        
+        # Check if we got the final result or timed out
+        if 'result' not in result:
+            if result.get('timeout'):
+                print("\n❌ Timeout waiting for triangulation")
             else:
-                print(f"\n❌ Triangulation not completed (status: {session_status})")
-        return False
-    
-    print("✅ Triangulation completed!")
-    
-    triangulation_result = result['result']
-    points_3d = np.array(triangulation_result['points_3d'])
-    mean_error = triangulation_result['mean_error']
-    processing_time = triangulation_result.get('processing_time', 0)
-    
-    print(f"\n✅ Triangulation Results:")
-    print(f"   Number of 3D points: {len(points_3d)}")
-    print(f"   Mean reprojection error: {mean_error:.3f} pixels")
-    print(f"   Processing time: {processing_time:.2f} seconds")
-    print(f"\n   Sample 3D points:")
-    for i, pt in enumerate(points_3d[:5]):
-        print(f"   Point {i}: ({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})")
-    
-    if len(points_3d) > 5:
-        print(f"   ... and {len(points_3d) - 5} more points")
-    
-    # Print per-view 2D keypoints with accuracy metrics (from result)
-    print(f"\n   Number of views in result: {len(result.get('views', []))}")
-    views_data = result.get('views', [])
-    if views_data:
-        print("\n   Per-view 2D keypoints:")
-        for view_idx, view in enumerate(views_data):
-            keypoints_2d = view.get('keypoints_2d', [])
-            print(f"\n   View {view_idx}:")
-            print(f"   Tracked {len(keypoints_2d)} keypoints:")
-            
-            # Show sample keypoints with consistency_distance
-            for i, kp in enumerate(keypoints_2d[:3]):
-                x, y = kp.get('x'), kp.get('y')
-                consistency = kp.get('consistency_distance')
-                if consistency is not None:
-                    print(f"      Point {i}: ({x:.2f}, {y:.2f}) - consistency_distance: {consistency:.3f}px")
+                session_info = result.get('session', {})
+                session_status = session_info.get('status')
+                if session_status == 'failed':
+                    print(f"\n❌ Session failed: {session_info.get('error_message', 'Unknown error')}")
                 else:
-                    print(f"      Point {i}: ({x:.2f}, {y:.2f})")
-            
-            if len(keypoints_2d) > 3:
-                print(f"      ... and {len(keypoints_2d) - 3} more points")
+                    print(f"\n❌ Triangulation not completed (status: {session_status})")
+            return False
+        
+        print("✅ Triangulation completed!")
+        
+        triangulation_result = result['result']
+        points_3d = np.array(triangulation_result['points_3d'])
+        mean_error = triangulation_result['mean_error']
+        processing_time = triangulation_result.get('processing_time', 0)
+        
+        print(f"\n✅ Triangulation Results:")
+        print(f"   Number of 3D points: {len(points_3d)}")
+        print(f"   Mean reprojection error: {mean_error:.3f} pixels")
+        print(f"   Processing time: {processing_time:.2f} seconds")
+        print(f"\n   Sample 3D points:")
+        for i, pt in enumerate(points_3d[:5]):
+            print(f"   Point {i}: ({pt[0]:.4f}, {pt[1]:.4f}, {pt[2]:.4f})")
+        
+        if len(points_3d) > 5:
+            print(f"   ... and {len(points_3d) - 5} more points")
+        
+        # Print per-view 2D keypoints with accuracy metrics (from result)
+        print(f"\n   Number of views in result: {len(result.get('views', []))}")
+        views_data = result.get('views', [])
+        if views_data:
+            print("\n   Per-view 2D keypoints:")
+            for view_idx, view in enumerate(views_data):
+                keypoints_2d = view.get('keypoints_2d', [])
+                print(f"\n   View {view_idx}:")
+                print(f"   Tracked {len(keypoints_2d)} keypoints:")
                 
-                # Show consistency_distance statistics if available
-                consistencies = [kp.get('consistency_distance') for kp in keypoints_2d if kp.get('consistency_distance') is not None]
-                if consistencies:
-                    print(f"      Consistency distance - mean: {np.mean(consistencies):.3f}px, min: {np.min(consistencies):.3f}px, max: {np.max(consistencies):.3f}px")
+                # Show sample keypoints with consistency_distance
+                for i, kp in enumerate(keypoints_2d[:3]):
+                    x, y = kp.get('x'), kp.get('y')
+                    consistency = kp.get('consistency_distance')
+                    if consistency is not None:
+                        print(f"      Point {i}: ({x:.2f}, {y:.2f}) - consistency_distance: {consistency:.3f}px")
+                    else:
+                        print(f"      Point {i}: ({x:.2f}, {y:.2f})")
+                
+                if len(keypoints_2d) > 3:
+                    print(f"      ... and {len(keypoints_2d) - 3} more points")
+                    
+                    # Show consistency_distance statistics if available
+                    consistencies = [kp.get('consistency_distance') for kp in keypoints_2d if kp.get('consistency_distance') is not None]
+                    if consistencies:
+                        print(f"      Consistency distance - mean: {np.mean(consistencies):.3f}px, min: {np.min(consistencies):.3f}px, max: {np.max(consistencies):.3f}px")
+        
+        success = True
+        return True
+        
+    finally:
+        # Clean up: terminate session (always execute, regardless of success/failure)
+        print("\n7. Terminating session...")
+        term_result = client.terminate_session(session_id)
+        if term_result.get('success'):
+            print("✅ Session terminated and cleaned up")
+        else:
+            print(f"⚠️  Failed to terminate session: {term_result.get('error')}")
+
+
+def test_triangulation_sequential():
+    """
+    Test function: Run triangulation sequentially on multiple test datasets.
     
-    # Clean up: terminate session
-    print("\n7. Terminating session...")
-    term_result = client.terminate_session(session_id)
-    if term_result.get('success'):
-        print("✅ Session terminated and cleaned up")
+    This function demonstrates running triangulation on different datasets
+    in sequence to test the service's ability to handle multiple sessions.
+    """
+    print("\n" + "=" * 60)
+    print("Test: Sequential Triangulation on Multiple Datasets")
+    print("=" * 60)
+    
+    # Define test datasets
+    test_datasets = [
+        "dataset/ur_locate_push2end_data/test/test_img_20251118",
+        "dataset/ur_locate_frame_data/test/session_1"
+    ]
+    
+    results = []
+    
+    for idx, test_dir in enumerate(test_datasets, 1):
+        print(f"\n{'=' * 60}")
+        print(f"Running Test {idx}/{len(test_datasets)}: {test_dir}")
+        print(f"{'=' * 60}")
+        
+        success = test_triangulation_from_images(test_data_dir=test_dir)
+        results.append({
+            'test_dir': test_dir,
+            'success': success
+        })
+        
+        if not success:
+            print(f"\n⚠️  Test {idx} failed, continuing to next test...")
+        else:
+            print(f"\n✅ Test {idx} completed successfully!")
+        
+        # Brief pause between tests
+        if idx < len(test_datasets):
+            print("\nPausing 2 seconds before next test...")
+            time.sleep(2)
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("Sequential Triangulation Test Summary")
+    print("=" * 60)
+    
+    successful_count = sum(1 for r in results if r['success'])
+    
+    for idx, result in enumerate(results, 1):
+        status = "✅ PASS" if result['success'] else "❌ FAIL"
+        print(f"Test {idx}: {status} - {result['test_dir']}")
+    
+    print(f"\nTotal: {successful_count}/{len(results)} tests passed")
+    
+    if successful_count == len(results):
+        print("\n✅ All sequential tests passed!")
+        return True
     else:
-        print(f"⚠️  Failed to terminate session: {term_result.get('error')}")
+        print(f"\n⚠️  {len(results) - successful_count} test(s) failed")
+        return False
+
+
+def test_triangulation_concurrent():
+    """
+    Test function: Run triangulation concurrently on multiple test datasets.
     
-    return True
+    This function demonstrates running triangulation on different datasets
+    simultaneously to test the service's ability to handle concurrent sessions.
+    """
+    print("\n" + "=" * 60)
+    print("Test: Concurrent Triangulation on Multiple Datasets")
+    print("=" * 60)
+    
+    # Define test datasets
+    test_datasets = [
+        "dataset/ur_locate_push2end_data/test/test_img_20251118",
+        "dataset/ur_locate_frame_data/test/session_1"
+    ]
+    
+    results = []
+    threads = []
+    results_lock = threading.Lock()
+    
+    def run_test(idx, test_dir):
+        """Thread worker function to run a single test."""
+        print(f"\n[Thread {idx}] Starting test for: {test_dir}")
+        success = test_triangulation_from_images(test_data_dir=test_dir)
+        
+        with results_lock:
+            results.append({
+                'test_id': idx,
+                'test_dir': test_dir,
+                'success': success
+            })
+        
+        if not success:
+            print(f"\n[Thread {idx}] ⚠️  Test failed")
+        else:
+            print(f"\n[Thread {idx}] ✅ Test completed successfully!")
+    
+    # Start all threads
+    print(f"\nStarting {len(test_datasets)} concurrent tests...")
+    for idx, test_dir in enumerate(test_datasets, 1):
+        thread = threading.Thread(
+            target=run_test,
+            args=(idx, test_dir),
+            name=f"Test-{idx}"
+        )
+        threads.append(thread)
+        thread.start()
+        # Small stagger to avoid race conditions on startup
+        time.sleep(0.1)
+    
+    # Wait for all threads to complete
+    print("\nWaiting for all tests to complete...")
+    for thread in threads:
+        thread.join()
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("Concurrent Triangulation Test Summary")
+    print("=" * 60)
+    
+    # Sort results by test_id for consistent display
+    results.sort(key=lambda x: x['test_id'])
+    
+    successful_count = sum(1 for r in results if r['success'])
+    
+    for result in results:
+        status = "✅ PASS" if result['success'] else "❌ FAIL"
+        print(f"Test {result['test_id']}: {status} - {result['test_dir']}")
+    
+    print(f"\nTotal: {successful_count}/{len(results)} tests passed")
+    
+    if successful_count == len(results):
+        print("\n✅ All concurrent tests passed!")
+        return True
+    else:
+        print(f"\n⚠️  {len(results) - successful_count} test(s) failed")
+        return False
 
 
 def main():
@@ -274,15 +440,23 @@ def main():
     print("=" * 60)
     
     # Test 1: Upload references
-    print("\n[Test 1/2] Upload References")
+    print("\n[Test 1/4] Upload References")
     success1 = test_upload_references()
     
     # Test 2: Triangulation from images
-    print("\n[Test 2/2] Triangulation from Images")
+    print("\n[Test 2/4] Triangulation from Images")
     success2 = test_triangulation_from_images()
     
+    # Test 3: Sequential triangulation
+    print("\n[Test 3/4] Sequential Triangulation")
+    success3 = test_triangulation_sequential()
+    
+    # Test 4: Concurrent triangulation
+    print("\n[Test 4/4] Concurrent Triangulation")
+    success4 = test_triangulation_concurrent()
+    
     # Summary
-    if success1 and success2:
+    if success1 and success2 and success3 and success4:
         print("\n" + "=" * 60)
         print("✅ All tests passed!")
         print("=" * 60)
