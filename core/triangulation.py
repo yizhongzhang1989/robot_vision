@@ -318,3 +318,195 @@ def _triangulate_dlt(points_2d: List[np.ndarray],
         X_3d = X_homogeneous[:3]
     
     return X_3d
+
+
+def triangulate_view_plane(view_data: Dict, plane_point: np.ndarray, plane_normal: np.ndarray) -> Dict:
+    """
+    Triangulate 3D points by intersecting camera rays with a plane.
+    
+    This function takes 2D point observations from a single camera view and finds
+    their 3D positions on a known plane by intersecting the camera rays with that plane.
+    
+    Args:
+        view_data: Dictionary containing single view data:
+            - 'points_2d': np.ndarray of shape (N, 2) - 2D pixel coordinates (x, y)
+            - 'image_size': tuple (width, height) - Image dimensions in pixels
+            - 'intrinsic': np.ndarray of shape (3, 3) - Camera intrinsic matrix
+            - 'distortion': (optional) np.ndarray - Distortion coefficients
+            - 'extrinsic': np.ndarray of shape (4, 4) - Camera extrinsic matrix (world to camera)
+        plane_point: np.ndarray of shape (3,) - A point on the plane in world coordinates
+        plane_normal: np.ndarray of shape (3,) - Normal vector of the plane (will be normalized)
+    
+    Returns:
+        Dict containing triangulation results:
+        {
+            'success': bool - Whether triangulation succeeded
+            'points_3d': np.ndarray of shape (N, 3) - 3D points on the plane in world coordinates
+            'distances': np.ndarray of shape (N,) - Distance from camera center to each 3D point
+            'error_message': str - Error message if success is False (only present when success=False)
+        }
+    
+    Example usage:
+        view_data = {
+            'points_2d': np.array([[100, 200], [150, 180]]),
+            'image_size': (1920, 1080),
+            'intrinsic': intrinsic_matrix,
+            'distortion': distortion_coeffs,
+            'extrinsic': extrinsic_matrix
+        }
+        
+        plane_point = np.array([0.0, 0.0, 0.0])  # Origin on the plane
+        plane_normal = np.array([0.0, 0.0, 1.0])  # XY plane (Z=0)
+        
+        result = triangulate_view_plane(view_data, plane_point, plane_normal)
+        
+        if result['success']:
+            points_3d = result['points_3d']
+            print(f"Triangulated {len(points_3d)} points on the plane")
+    """
+    try:
+        # ========================================
+        # INPUT VALIDATION
+        # ========================================
+        
+        required_fields = ['points_2d', 'image_size', 'intrinsic', 'extrinsic']
+        for field in required_fields:
+            if field not in view_data:
+                return {
+                    'success': False,
+                    'error_message': f"Missing required field '{field}' in view_data"
+                }
+        
+        points_2d = np.array(view_data['points_2d'], dtype=np.float32)
+        num_points = len(points_2d)
+        
+        if num_points == 0:
+            return {
+                'success': False,
+                'error_message': 'No points to triangulate'
+            }
+        
+        plane_point = np.array(plane_point, dtype=np.float64)
+        plane_normal = np.array(plane_normal, dtype=np.float64)
+        
+        if plane_point.shape != (3,):
+            return {
+                'success': False,
+                'error_message': f'plane_point must have shape (3,), got {plane_point.shape}'
+            }
+        
+        if plane_normal.shape != (3,):
+            return {
+                'success': False,
+                'error_message': f'plane_normal must have shape (3,), got {plane_normal.shape}'
+            }
+        
+        # Normalize plane normal
+        plane_normal_norm = np.linalg.norm(plane_normal)
+        if plane_normal_norm < 1e-10:
+            return {
+                'success': False,
+                'error_message': 'plane_normal has zero length'
+            }
+        plane_normal = plane_normal / plane_normal_norm
+        
+        # ========================================
+        # UNDISTORT POINTS
+        # ========================================
+        
+        intrinsic = np.array(view_data['intrinsic'], dtype=np.float64)
+        
+        if 'distortion' in view_data:
+            distortion = np.array(view_data['distortion'], dtype=np.float64)
+            points_reshaped = points_2d.reshape(-1, 1, 2)
+            
+            # Undistort to normalized camera coordinates
+            undistorted_normalized = cv2.undistortPoints(
+                points_reshaped,
+                intrinsic,
+                distortion,
+                P=None  # Return normalized coordinates
+            )
+            undistorted_normalized = undistorted_normalized.reshape(-1, 2)
+        else:
+            # Convert pixel coordinates to normalized camera coordinates
+            # [x_norm, y_norm] = K^-1 * [x_pixel, y_pixel, 1]
+            intrinsic_inv = np.linalg.inv(intrinsic)
+            points_homogeneous = np.hstack([points_2d, np.ones((num_points, 1))])
+            normalized_coords = (intrinsic_inv @ points_homogeneous.T).T
+            undistorted_normalized = normalized_coords[:, :2]
+        
+        # ========================================
+        # COMPUTE CAMERA CENTER AND ORIENTATION
+        # ========================================
+        
+        extrinsic = np.array(view_data['extrinsic'], dtype=np.float64)
+        R = extrinsic[:3, :3]
+        t = extrinsic[:3, 3]
+        
+        # Camera center in world coordinates: C = -R^T * t
+        camera_center = -R.T @ t
+        
+        # ========================================
+        # RAY-PLANE INTERSECTION
+        # ========================================
+        
+        points_3d = np.zeros((num_points, 3))
+        distances = np.zeros(num_points)
+        
+        for i in range(num_points):
+            # Ray direction in camera coordinates (normalized)
+            ray_camera = np.array([undistorted_normalized[i, 0], 
+                                   undistorted_normalized[i, 1], 
+                                   1.0])
+            
+            # Transform ray to world coordinates
+            ray_world = R.T @ ray_camera
+            ray_world = ray_world / np.linalg.norm(ray_world)
+            
+            # Ray-plane intersection
+            # Plane equation: (P - plane_point) · plane_normal = 0
+            # Ray equation: P = camera_center + d * ray_world
+            # Solve for d: (camera_center + d * ray_world - plane_point) · plane_normal = 0
+            
+            denominator = np.dot(ray_world, plane_normal)
+            
+            if abs(denominator) < 1e-10:
+                # Ray is parallel to plane - leave as zero (invalid)
+                continue
+            
+            numerator = np.dot(plane_point - camera_center, plane_normal)
+            d = numerator / denominator
+            
+            if d < 0:
+                # Intersection point is behind the camera - leave as zero (invalid)
+                continue
+            
+            # 3D point on plane
+            point_3d = camera_center + d * ray_world
+            points_3d[i] = point_3d
+            distances[i] = d
+        
+        # ========================================
+        # PREPARE RESULTS
+        # ========================================
+        
+        result = {
+            'success': True,
+            'points_3d': points_3d,
+            'distances': distances
+        }
+        
+        return result
+        
+    except Exception as e:
+        # Sanitize error message for encoding issues
+        try:
+            error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+        except Exception:
+            error_msg = "Unknown error (encoding issue)"
+        
+        return {
+            'success': False,
+            'error_message': error_msg
+        }
