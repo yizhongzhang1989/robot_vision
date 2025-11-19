@@ -16,6 +16,7 @@ import time
 import numpy as np
 import cv2
 from pathlib import Path
+import threading
 
 # Add project root to path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -352,6 +353,86 @@ def test_triangulation_sequential():
         return False
 
 
+def test_triangulation_concurrent():
+    """
+    Test function: Run triangulation concurrently on multiple test datasets.
+    
+    This function demonstrates running triangulation on different datasets
+    simultaneously to test the service's ability to handle concurrent sessions.
+    """
+    print("\n" + "=" * 60)
+    print("Test: Concurrent Triangulation on Multiple Datasets")
+    print("=" * 60)
+    
+    # Define test datasets
+    test_datasets = [
+        "dataset/ur_locate_push2end_data/test/test_img_20251118",
+        "dataset/ur_locate_frame_data/test/session_1"
+    ]
+    
+    results = []
+    threads = []
+    results_lock = threading.Lock()
+    
+    def run_test(idx, test_dir):
+        """Thread worker function to run a single test."""
+        print(f"\n[Thread {idx}] Starting test for: {test_dir}")
+        success = test_triangulation_from_images(test_data_dir=test_dir)
+        
+        with results_lock:
+            results.append({
+                'test_id': idx,
+                'test_dir': test_dir,
+                'success': success
+            })
+        
+        if not success:
+            print(f"\n[Thread {idx}] ⚠️  Test failed")
+        else:
+            print(f"\n[Thread {idx}] ✅ Test completed successfully!")
+    
+    # Start all threads
+    print(f"\nStarting {len(test_datasets)} concurrent tests...")
+    for idx, test_dir in enumerate(test_datasets, 1):
+        thread = threading.Thread(
+            target=run_test,
+            args=(idx, test_dir),
+            name=f"Test-{idx}"
+        )
+        threads.append(thread)
+        thread.start()
+        # Small stagger to avoid race conditions on startup
+        time.sleep(0.1)
+    
+    # Wait for all threads to complete
+    print("\nWaiting for all tests to complete...")
+    for thread in threads:
+        thread.join()
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("Concurrent Triangulation Test Summary")
+    print("=" * 60)
+    
+    # Sort results by test_id for consistent display
+    results.sort(key=lambda x: x['test_id'])
+    
+    successful_count = sum(1 for r in results if r['success'])
+    
+    for result in results:
+        status = "✅ PASS" if result['success'] else "❌ FAIL"
+        print(f"Test {result['test_id']}: {status} - {result['test_dir']}")
+    
+    print(f"\nTotal: {successful_count}/{len(results)} tests passed")
+    
+    if successful_count == len(results):
+        print("\n✅ All concurrent tests passed!")
+        return True
+    else:
+        print(f"\n⚠️  {len(results) - successful_count} test(s) failed")
+        return False
+
+
 def main():
     """Main function to run tests."""
     print("\n" + "=" * 60)
@@ -359,19 +440,23 @@ def main():
     print("=" * 60)
     
     # Test 1: Upload references
-    print("\n[Test 1/3] Upload References")
+    print("\n[Test 1/4] Upload References")
     success1 = test_upload_references()
     
     # Test 2: Triangulation from images
-    print("\n[Test 2/3] Triangulation from Images")
+    print("\n[Test 2/4] Triangulation from Images")
     success2 = test_triangulation_from_images()
     
     # Test 3: Sequential triangulation
-    print("\n[Test 3/3] Sequential Triangulation")
+    print("\n[Test 3/4] Sequential Triangulation")
     success3 = test_triangulation_sequential()
     
+    # Test 4: Concurrent triangulation
+    print("\n[Test 4/4] Concurrent Triangulation")
+    success4 = test_triangulation_concurrent()
+    
     # Summary
-    if success1 and success2 and success3:
+    if success1 and success2 and success3 and success4:
         print("\n" + "=" * 60)
         print("✅ All tests passed!")
         print("=" * 60)
