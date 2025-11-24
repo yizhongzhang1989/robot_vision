@@ -477,7 +477,7 @@ def run_fitting_example_with_data(view_data, target_points_local, visualize=Fals
     }
 
 
-def run_fitting_with_missing_detections(view_data, target_points_local, visualize=False):
+def run_fitting_with_missing_detections(view_data, target_points_local, view_visibility=None, visualize=False):
     """
     Test fitting with missing point detections (None values).
     
@@ -487,34 +487,47 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
     Args:
         view_data: List of view dicts from load_chessboard_test_data()
         target_points_local: List of 3D points in local coordinates
+        view_visibility: Optional[List[List[int]]] - List of visible point indices for each view.
+                        If None, defaults to 4 corner points for all views.
+                        Example: [[0, 10, 77, 87], [0, 10, 77, 87], ...] for 4 corners in all views
+                        Length must match len(view_data), each inner list contains visible point indices
         visualize: If True, display 3D visualization
     """
     print("\n" + "=" * 80)
     print("Fitting Test with Missing Detections")
     print("=" * 80)
     
-    # Create modified view data keeping only 4 corner points visible
+    # Create modified view data based on visibility specification
     modified_view_data = []
     num_points = len(target_points_local)
     
-    # Determine chessboard dimensions (assume standard 11x8 pattern = 88 points)
-    # For a chessboard with width x height corners, the 4 corner indices are:
-    # - Top-left: 0
-    # - Top-right: width - 1
-    # - Bottom-left: width * (height - 1)
-    # - Bottom-right: width * height - 1
+    # Default visibility: only 4 corner points
+    if view_visibility is None:
+        # Determine chessboard dimensions (assume standard 11x8 pattern = 88 points)
+        # For a chessboard with width x height corners, the 4 corner indices are:
+        # - Top-left: 0
+        # - Top-right: width - 1
+        # - Bottom-left: width * (height - 1)
+        # - Bottom-right: width * height - 1
+        
+        # Infer width from total points (assuming rectangular pattern)
+        # For 88 points: width=11, height=8
+        width = 11
+        height = num_points // width
+        
+        corner_indices = [
+            0,                          # Top-left
+            width - 1,                  # Top-right
+            width * (height - 1),       # Bottom-left
+            width * height - 1          # Bottom-right
+        ]
+        
+        # Use same corner points for all views
+        view_visibility = [corner_indices for _ in range(len(view_data))]
     
-    # Infer width from total points (assuming rectangular pattern)
-    # For 88 points: width=11, height=8
-    width = 11
-    height = num_points // width
-    
-    corner_indices = {
-        0,                          # Top-left
-        width - 1,                  # Top-right
-        width * (height - 1),       # Bottom-left
-        width * height - 1          # Bottom-right
-    }
+    # Validate view_visibility
+    if len(view_visibility) != len(view_data):
+        raise ValueError(f"view_visibility length ({len(view_visibility)}) must match view_data length ({len(view_data)})")
     
     # Track which points are missing in which views
     missing_matrix = []
@@ -523,10 +536,13 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
         # Convert points_2d to list format (should already be list)
         points_2d_list = list(view['points_2d'])
         
-        # Keep only 4 corner points, set all others to None
+        # Get visible point indices for this view
+        visible_indices = set(view_visibility[view_idx])
+        
+        # Set non-visible points to None
         missing_in_view = [False] * num_points
         for idx in range(num_points):
-            if idx not in corner_indices:
+            if idx not in visible_indices:
                 points_2d_list[idx] = None
                 missing_in_view[idx] = True
         
@@ -550,10 +566,15 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
     num_points_with_observations = sum(1 for count in view_counts if count >= 1)
     num_points_no_observations = sum(1 for count in view_counts if count == 0)
     
+    # Collect unique visible indices across all views
+    all_visible_indices = set()
+    for visible_list in view_visibility:
+        all_visible_indices.update(visible_list)
+    
     print("[*] Test scenario:")
     print(f"   - {num_points} points total")
     print(f"   - {len(view_data)} camera views")
-    print(f"   - Only keeping 4 corner points visible (indices: {sorted(corner_indices)})")
+    print(f"   - Visible points across all views: {sorted(all_visible_indices)}")
     print(f"   - {num_points_with_observations} points visible in ≥1 views")
     print(f"   - {num_points_no_observations} points visible in 0 views")
     
@@ -776,7 +797,7 @@ def main():
             print(f"  - Used {example_result['num_views']} camera views")
             print(f"  - Reprojection error: {example_result['mean_reprojection_error']:.3f} pixels")
         
-        # Test 2: Fitting with missing detections
+        # Test 2: Fitting with missing detections (default: 4 corners in all views)
         missing_detection_result = run_fitting_with_missing_detections(
             view_data=view_data,
             target_points_local=target_points_local,
@@ -793,7 +814,175 @@ def main():
             print(f"  - Points with no observations: {missing_detection_result['num_points_no_observations']}")
             print(f"  - Mean reprojection error: {missing_detection_result['mean_reprojection_error']:.3f} pixels")
         
-        # Test 3: Error handling tests
+        # Test 3: Fitting with diverse visibility patterns
+        # View 0, 1: top corners visible (indices 0, 10)
+        # View 2, 3: bottom left corner visible (index 77)
+        # View 4, 5: none visible (empty list)
+        num_points = len(target_points_local)
+        width = 11
+        height = num_points // width
+        
+        diverse_visibility = [
+            [0, width - 1],                     # View 0: top corners (0, 10)
+            [0, width - 1],                     # View 1: top corners (0, 10)
+            [width * (height - 1)],             # View 2: bottom left corner (77)
+            [width * (height - 1)],             # View 3: bottom left corner (77)
+            [],                                  # View 4: none visible
+            []                                   # View 5: none visible
+        ]
+        
+        diverse_result = run_fitting_with_missing_detections(
+            view_data=view_data,
+            target_points_local=target_points_local,
+            view_visibility=diverse_visibility,
+            visualize=args.visualize
+        )
+        
+        if 'error' in diverse_result:
+            print(f"\n[!] Test 3 completed with issues: {diverse_result['error']}")
+        else:
+            print("\n[+] Test 3 completed successfully!")
+            print("\nTest 3 Results:")
+            print(f"  - Total points: {diverse_result['num_points_total']}")
+            print(f"  - Points with observations: {diverse_result['num_points_with_observations']}")
+            print(f"  - Points with no observations: {diverse_result['num_points_no_observations']}")
+            print(f"  - Mean reprojection error: {diverse_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 4: Fitting with 4 corners distributed across views
+        # View 0, 1: top corners visible (indices 0, 10)
+        # View 2: bottom left corner visible (index 77)
+        # View 3: bottom right corner visible (index 87)
+        # View 4, 5: use default (will be truncated or repeated as needed)
+        distributed_visibility = [
+            [0, width - 1],                     # View 0: top corners (0, 10)
+            [0, width - 1],                     # View 1: top corners (0, 10)
+            [width * (height - 1)],             # View 2: bottom left corner (77)
+            [width * height - 1],               # View 3: bottom right corner (87)
+        ]
+        
+        # Extend to match number of views
+        while len(distributed_visibility) < len(view_data):
+            distributed_visibility.append([])
+        
+        distributed_result = run_fitting_with_missing_detections(
+            view_data=view_data,
+            target_points_local=target_points_local,
+            view_visibility=distributed_visibility,
+            visualize=args.visualize
+        )
+        
+        if 'error' in distributed_result:
+            print(f"\n[!] Test 4 completed with issues: {distributed_result['error']}")
+        else:
+            print("\n[+] Test 4 completed successfully!")
+            print("\nTest 4 Results:")
+            print(f"  - Total points: {distributed_result['num_points_total']}")
+            print(f"  - Points with observations: {distributed_result['num_points_with_observations']}")
+            print(f"  - Points with no observations: {distributed_result['num_points_no_observations']}")
+            print(f"  - Mean reprojection error: {distributed_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 5: Fitting with 3 corners, one corner per view
+        # View 0, 1: top left corner (index 0)
+        # View 2: top right corner (index 10)
+        # View 3: bottom left corner (index 77)
+        # View 4, 5: none visible
+        three_corners_visibility = [
+            [0],                                 # View 0: top left corner
+            [0],                                 # View 1: top left corner
+            [width - 1],                         # View 2: top right corner (10)
+            [width * (height - 1)],              # View 3: bottom left corner (77)
+        ]
+        
+        # Extend to match number of views
+        while len(three_corners_visibility) < len(view_data):
+            three_corners_visibility.append([])
+        
+        three_corners_result = run_fitting_with_missing_detections(
+            view_data=view_data,
+            target_points_local=target_points_local,
+            view_visibility=three_corners_visibility,
+            visualize=args.visualize
+        )
+        
+        if 'error' in three_corners_result:
+            print(f"\n[!] Test 5 completed with issues: {three_corners_result['error']}")
+        else:
+            print("\n[+] Test 5 completed successfully!")
+            print("\nTest 5 Results:")
+            print(f"  - Total points: {three_corners_result['num_points_total']}")
+            print(f"  - Points with observations: {three_corners_result['num_points_with_observations']}")
+            print(f"  - Points with no observations: {three_corners_result['num_points_no_observations']}")
+            print(f"  - Mean reprojection error: {three_corners_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 6: Fitting with 4 corners, each in a different view
+        # View 0: top left corner (index 0)
+        # View 1: top right corner (index 10)
+        # View 2: bottom left corner (index 77)
+        # View 3: bottom right corner (index 87)
+        # View 4, 5: none visible
+        single_corner_per_view = [
+            [0],                                 # View 0: top left corner
+            [width - 1],                         # View 1: top right corner (10)
+            [width * (height - 1)],              # View 2: bottom left corner (77)
+            [width * height - 1],                # View 3: bottom right corner (87)
+        ]
+        
+        # Extend to match number of views
+        while len(single_corner_per_view) < len(view_data):
+            single_corner_per_view.append([])
+        
+        single_corner_result = run_fitting_with_missing_detections(
+            view_data=view_data,
+            target_points_local=target_points_local,
+            view_visibility=single_corner_per_view,
+            visualize=args.visualize
+        )
+        
+        if 'error' in single_corner_result:
+            print(f"\n[!] Test 6 completed with issues: {single_corner_result['error']}")
+        else:
+            print("\n[+] Test 6 completed successfully!")
+            print("\nTest 6 Results:")
+            print(f"  - Total points: {single_corner_result['num_points_total']}")
+            print(f"  - Points with observations: {single_corner_result['num_points_with_observations']}")
+            print(f"  - Points with no observations: {single_corner_result['num_points_no_observations']}")
+            print(f"  - Mean reprojection error: {single_corner_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 7: Fitting with 3 corners starting from view 1
+        # View 0: none visible
+        # View 1: top left corner (index 0)
+        # View 2: top right corner (index 10)
+        # View 3: bottom left corner (index 77)
+        # View 4, 5: none visible
+        three_corners_shifted = [
+            [],                                  # View 0: none visible
+            [0],                                 # View 1: top left corner
+            [width - 1],                         # View 2: top right corner (10)
+            [width * (height - 1)],              # View 3: bottom left corner (77)
+        ]
+        
+        # Extend to match number of views
+        while len(three_corners_shifted) < len(view_data):
+            three_corners_shifted.append([])
+        
+        three_corners_shifted_result = run_fitting_with_missing_detections(
+            view_data=view_data,
+            target_points_local=target_points_local,
+            view_visibility=three_corners_shifted,
+            visualize=args.visualize
+        )
+        
+        if 'error' in three_corners_shifted_result:
+            print(f"\n[!] Test 7 completed with issues: {three_corners_shifted_result['error']}")
+        else:
+            print("\n[+] Test 7 completed successfully!")
+            print("\nTest 7 Results:")
+            print(f"  - Total points: {three_corners_shifted_result['num_points_total']}")
+            print(f"  - Points with observations: {three_corners_shifted_result['num_points_with_observations']}")
+            print(f"  - Points with no observations: {three_corners_shifted_result['num_points_no_observations']}")
+            print(f"  - Mean reprojection error: {three_corners_shifted_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 8: Error handling tests
         test_error_handling()
         
         sys.exit(0)
