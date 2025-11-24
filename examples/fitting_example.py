@@ -38,8 +38,8 @@ parent_dir = Path(__file__).parent.parent
 if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
-# Import fitting module (from robot_vision/core)
-from core.fitting import fitting_multiview
+# Import fitting function from triangulation module (from robot_vision/core)
+from core.triangulation import fitting_multiview
 
 
 def load_chessboard_test_data():

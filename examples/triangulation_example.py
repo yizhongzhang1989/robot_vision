@@ -1154,8 +1154,7 @@ def main():
         # Test 4: Triangulation with missing detections
         missing_detection_result = test_triangulation_with_missing_detections(
             view_data=view_data,
-            visualize=True
-            # visualize=args.visualize
+            visualize=args.visualize
         )
         
         if 'error' in missing_detection_result:
