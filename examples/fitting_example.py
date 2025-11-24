@@ -493,11 +493,28 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
     print("Fitting Test with Missing Detections")
     print("=" * 80)
     
-    # Create modified view data with randomly missing points
-    np.random.seed(42)  # For reproducibility
-    
+    # Create modified view data keeping only 4 corner points visible
     modified_view_data = []
     num_points = len(target_points_local)
+    
+    # Determine chessboard dimensions (assume standard 11x8 pattern = 88 points)
+    # For a chessboard with width x height corners, the 4 corner indices are:
+    # - Top-left: 0
+    # - Top-right: width - 1
+    # - Bottom-left: width * (height - 1)
+    # - Bottom-right: width * height - 1
+    
+    # Infer width from total points (assuming rectangular pattern)
+    # For 88 points: width=11, height=8
+    width = 11
+    height = num_points // width
+    
+    corner_indices = {
+        0,                          # Top-left
+        width - 1,                  # Top-right
+        width * (height - 1),       # Bottom-left
+        width * height - 1          # Bottom-right
+    }
     
     # Track which points are missing in which views
     missing_matrix = []
@@ -506,14 +523,12 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
         # Convert points_2d to list format (should already be list)
         points_2d_list = list(view['points_2d'])
         
-        # Randomly select some points to set as None
-        num_to_remove = num_points // 3  # Remove about 1/3 of points
-        indices_to_remove = np.random.choice(num_points, size=num_to_remove, replace=False)
-        
+        # Keep only 4 corner points, set all others to None
         missing_in_view = [False] * num_points
-        for idx in indices_to_remove:
-            points_2d_list[idx] = None
-            missing_in_view[idx] = True
+        for idx in range(num_points):
+            if idx not in corner_indices:
+                points_2d_list[idx] = None
+                missing_in_view[idx] = True
         
         missing_matrix.append(missing_in_view)
         
@@ -538,7 +553,7 @@ def run_fitting_with_missing_detections(view_data, target_points_local, visualiz
     print("[*] Test scenario:")
     print(f"   - {num_points} points total")
     print(f"   - {len(view_data)} camera views")
-    print("   - Randomly removed ~33% of points from each view")
+    print(f"   - Only keeping 4 corner points visible (indices: {sorted(corner_indices)})")
     print(f"   - {num_points_with_observations} points visible in ≥1 views")
     print(f"   - {num_points_no_observations} points visible in 0 views")
     
