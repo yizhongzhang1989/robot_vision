@@ -29,10 +29,10 @@ queue:
 
 # Session Configuration
 session:
-  timeout_minutes: 30
+  timeout_minutes: 10  # Session expires after 10 minutes of inactivity (last access)
   max_concurrent_sessions: 50
-  cleanup_interval_seconds: 300  # Run cleanup every 5 minutes
-  keep_completed_hours: 1  # Keep completed sessions for 1 hour
+  cleanup_interval_seconds: 60  # Run cleanup every 1 minute
+  keep_completed_minutes: 5  # Keep completed sessions for 5 minutes
 
 # Storage Configuration
 storage:

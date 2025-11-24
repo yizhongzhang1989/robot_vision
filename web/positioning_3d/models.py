@@ -54,6 +54,7 @@ class View:
     """Single camera view in a positioning session."""
     view_id: str
     session_id: str
+    reference_name: str  # Reference image to use for this view
     image: Optional[np.ndarray] = None
     image_base64: Optional[str] = None  # For storage/display
     camera_params: Optional[CameraParams] = None
@@ -68,6 +69,7 @@ class View:
         data = {
             'view_id': self.view_id,
             'session_id': self.session_id,
+            'reference_name': self.reference_name,
             'status': self.status.value,
             'timestamp': self.timestamp.isoformat(),
             'error_message': self.error_message,
@@ -90,13 +92,14 @@ class View:
 
 @dataclass
 class TriangulationResult:
-    """Result of 3D triangulation."""
+    """Result of 3D triangulation or fitting."""
     success: bool
-    points_3d: Optional[np.ndarray] = None
-    reprojection_errors: Optional[List[np.ndarray]] = None
+    points_3d: Optional[Any] = None  # Can be np.ndarray or List[np.ndarray or None]
+    reprojection_errors: Optional[Any] = None  # Can be List[np.ndarray] or List[List[float or None]]
     mean_error: Optional[float] = None
     error_message: Optional[str] = None
     processing_time: Optional[float] = None
+    local2world: Optional[np.ndarray] = None  # For fitting: 4x4 transformation matrix from local to world coordinates
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -106,16 +109,35 @@ class TriangulationResult:
             'processing_time': self.processing_time
         }
         
+        # Add local2world transformation if available (from fitting)
+        if self.local2world is not None:
+            data['local2world'] = self.local2world.tolist() if isinstance(self.local2world, np.ndarray) else self.local2world
+        
         if self.success and self.points_3d is not None:
-            data['points_3d'] = self.points_3d.tolist()
+            # Handle both np.ndarray and List formats (List may contain None values)
+            if isinstance(self.points_3d, np.ndarray):
+                data['points_3d'] = self.points_3d.tolist()
+            else:
+                # It's a list, convert numpy arrays to lists, keep None as None
+                data['points_3d'] = [
+                    pt.tolist() if pt is not None else None
+                    for pt in self.points_3d
+                ]
+            
             data['num_points'] = len(self.points_3d)
             data['mean_error'] = self.mean_error
             
             if self.reprojection_errors:
-                data['reprojection_errors'] = [
-                    errors.tolist() if isinstance(errors, np.ndarray) else errors
-                    for errors in self.reprojection_errors
-                ]
+                # Handle nested list format with potential None values
+                data['reprojection_errors'] = []
+                for errors in self.reprojection_errors:
+                    if isinstance(errors, np.ndarray):
+                        data['reprojection_errors'].append(errors.tolist())
+                    elif isinstance(errors, list):
+                        # List may contain None values
+                        data['reprojection_errors'].append(errors)
+                    else:
+                        data['reprojection_errors'].append(errors)
                 
         return data
 
@@ -125,14 +147,15 @@ class RobotSession:
     """A robot positioning session with multiple views."""
     session_id: str
     robot_id: str
-    reference_name: str
     views: List[View] = field(default_factory=list)
     status: SessionStatus = SessionStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    last_accessed_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     result: Optional[TriangulationResult] = None
     error_message: Optional[str] = None
+    timeout_minutes: int = 10  # Per-session timeout in minutes
     
     def get_progress(self) -> Dict[str, Any]:
         """Get current session progress."""
@@ -158,12 +181,13 @@ class RobotSession:
         data = {
             'session_id': self.session_id,
             'robot_id': self.robot_id,
-            'reference_name': self.reference_name,
             'status': self.status.value,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
+            'last_accessed_at': self.last_accessed_at.isoformat(),
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'error_message': self.error_message,
+            'timeout_minutes': self.timeout_minutes,
             'progress': self.get_progress()
         }
         

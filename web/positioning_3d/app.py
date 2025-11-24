@@ -18,7 +18,7 @@ import logging
 import threading
 import queue as queue_module
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
 import yaml
@@ -48,7 +48,7 @@ from task_queue import TaskQueueManager
 from session_manager import SessionManager
 
 # Import triangulation core
-from core.triangulation import triangulate_multiview, triangulate_view_plane
+from core.triangulation import triangulate_multiview, triangulate_view_plane, fitting_multiview
 
 # Configure logging
 logging.basicConfig(
@@ -298,7 +298,7 @@ def handle_tracking_task(task: TrackingTask) -> bool:
         result_data = result.get('result', {})
         tracked_keypoints = result_data.get('tracked_keypoints', [])
         
-        # Convert to standard format with embedded accuracy
+        # Convert to standard format with embedded accuracy and name
         keypoints_2d = []
         
         for kp in tracked_keypoints:
@@ -306,9 +306,14 @@ def handle_tracking_task(task: TrackingTask) -> bool:
                 # Old format: [x, y]
                 keypoints_2d.append({'x': float(kp[0]), 'y': float(kp[1])})
             elif isinstance(kp, dict):
-                # New format: {'x': x, 'y': y, 'consistency_distance': dist, ...}
+                # New format: {'x': x, 'y': y, 'name': name, 'consistency_distance': dist, ...}
                 if 'x' in kp and 'y' in kp:
                     keypoint_dict = {'x': float(kp['x']), 'y': float(kp['y'])}
+                    
+                    # Preserve name if available
+                    name = kp.get('name')
+                    if name is not None:
+                        keypoint_dict['name'] = str(name)
                     
                     # Embed consistency_distance (smaller is better)
                     consistency_dist = kp.get('consistency_distance')
@@ -357,7 +362,8 @@ def handle_tracking_task(task: TrackingTask) -> bool:
         return False
 
 
-def trigger_triangulation(session_id: str, wait_for_tracking: bool = True, timeout_ms: int = 0):
+def trigger_triangulation(session_id: str, template_points: Optional[List[Dict[str, Any]]] = None, 
+                         wait_for_tracking: bool = True, timeout_ms: int = 0):
     """
     Trigger triangulation for a session on-demand.
     
@@ -367,6 +373,7 @@ def trigger_triangulation(session_id: str, wait_for_tracking: bool = True, timeo
     
     Args:
         session_id: Session identifier
+        template_points: Optional template points for filtering/fitting computation
         wait_for_tracking: If True, wait for pending views to be tracked
         timeout_ms: Maximum wait time in milliseconds for tracking to complete
     
@@ -418,17 +425,23 @@ def trigger_triangulation(session_id: str, wait_for_tracking: bool = True, timeo
     })
     
     # Perform triangulation synchronously (in the calling thread)
-    _perform_triangulation(session_id)
+    _perform_triangulation(session_id, template_points)
     
     return True
 
 
-def _perform_triangulation(session_id: str):
+def _perform_triangulation(session_id: str, template_points: Optional[List[Dict[str, Any]]] = None):
     """
-    Perform triangulation for a session.
+    Perform triangulation or fitting for a session.
+    
+    Mode detection:
+    - Fitting mode: all template_points have x,y,z coordinates
+    - Filtered triangulation: template_points specified but not all have x,y,z
+    - Standard triangulation: no template_points specified
     
     Args:
         session_id: Session identifier
+        template_points: Optional template points for this specific computation
     """
     global session_manager
     
@@ -439,15 +452,37 @@ def _perform_triangulation(session_id: str):
     try:
         start_time = time.time()
         
-        # Prepare view data for triangulation
+        # Determine computation mode based on template_points parameter
+        # Fitting mode: all points have x,y,z coordinates
+        # Triangulation mode: not all points have x,y,z (filter by name)
+        use_fitting = False
+        filter_by_name = False
+        
+        if template_points is not None:
+            # Check if all points have x,y,z coordinates
+            all_have_coords = all(
+                'x' in pt and 'y' in pt and 'z' in pt 
+                for pt in template_points
+            )
+            
+            if all_have_coords:
+                use_fitting = True
+                logger.info(f"Using fitting mode: all {len(template_points)} template points have coordinates")
+            else:
+                filter_by_name = True
+                logger.info(f"Using triangulation mode with name filtering: {len(template_points)} template names")
+        else:
+            logger.info("Using standard triangulation mode: no template points specified")
+        
+        # Prepare view data
         view_data = []
+        reference_names = set()
+        
         for view in session.views:
             if view.status == ViewStatus.TRACKED and view.keypoints_2d:
-                # Convert keypoints to array format
-                points_2d = np.array([[kp['x'], kp['y']] for kp in view.keypoints_2d])
+                reference_names.add(view.reference_name)
                 
                 view_dict = {
-                    'points_2d': points_2d,
                     'image_size': view.camera_params.image_size,
                     'intrinsic': view.camera_params.intrinsic,
                     'extrinsic': view.camera_params.extrinsic
@@ -457,15 +492,62 @@ def _perform_triangulation(session_id: str):
                 if view.camera_params.distortion is not None:
                     view_dict['distortion'] = view.camera_params.distortion
                 
+                if use_fitting or filter_by_name:
+                    # For both fitting and filtered triangulation: match keypoints by name
+                    # Create a list with None for unmatched points
+                    points_2d_list = [None] * len(template_points)
+                    
+                    # Build name to index mapping for template points
+                    name_to_idx = {pt['name']: i for i, pt in enumerate(template_points)}
+                    
+                    # Match tracked keypoints to template points by name
+                    for kp in view.keypoints_2d:
+                        kp_name = kp.get('name')
+                        if kp_name and kp_name in name_to_idx:
+                            idx = name_to_idx[kp_name]
+                            points_2d_list[idx] = np.array([kp['x'], kp['y']], dtype=np.float32)
+                    
+                    view_dict['points_2d'] = points_2d_list
+                else:
+                    # For standard triangulation: use all keypoints as array
+                    points_2d = np.array([[kp['x'], kp['y']] for kp in view.keypoints_2d])
+                    view_dict['points_2d'] = points_2d
+                
                 view_data.append(view_dict)
         
-        if len(view_data) < 2:
-            raise ValueError("Need at least 2 tracked views for triangulation")
+        # Validate reference image consistency for standard triangulation
+        if not use_fitting and not filter_by_name:
+            if len(reference_names) > 1:
+                raise ValueError(
+                    f"Standard triangulation requires all views to use the same reference image. "
+                    f"Found {len(reference_names)} different references: {reference_names}. "
+                    f"Use template_points to enable name-based matching across different references."
+                )
         
-        logger.info(f"Triangulating with {len(view_data)} views...")
-        
-        # Call triangulation
-        result = triangulate_multiview(view_data)
+        if use_fitting:
+            # Need at least 1 view for fitting
+            if len(view_data) < 1:
+                raise ValueError("Need at least 1 tracked view for fitting")
+            
+            # Convert template points with coordinates to numpy arrays
+            target_points_3d_local = [
+                np.array([pt['x'], pt['y'], pt['z']], dtype=np.float64)
+                for pt in template_points
+            ]
+            
+            logger.info(f"Fitting with {len(view_data)} views and {len(target_points_3d_local)} local 3D points...")
+            
+            # Call fitting
+            result = fitting_multiview(view_data, target_points_3d_local)
+        else:
+            # Triangulation mode
+            if len(view_data) < 2:
+                raise ValueError("Need at least 2 tracked views for triangulation")
+            
+            logger.info(f"Triangulating with {len(view_data)} views...")
+            
+            # Call triangulation
+            result = triangulate_multiview(view_data)
         
         processing_time = time.time() - start_time
         
@@ -474,30 +556,42 @@ def _perform_triangulation(session_id: str):
             points_3d = result['points_3d']
             reprojection_errors = result['reprojection_errors']
             
-            # Calculate mean error
-            mean_error = np.mean([np.mean(errors) for errors in reprojection_errors])
+            # Calculate mean error (handle both np.ndarray and List formats with None values)
+            valid_errors = []
+            for errors in reprojection_errors:
+                if isinstance(errors, np.ndarray):
+                    valid_errors.extend(errors.tolist())
+                else:
+                    # List may contain None values
+                    valid_errors.extend([e for e in errors if e is not None])
+            
+            mean_error = float(np.mean(valid_errors)) if valid_errors else 0.0
             
             # Create result object
             triangulation_result = TriangulationResult(
                 success=True,
                 points_3d=points_3d,
                 reprojection_errors=reprojection_errors,
-                mean_error=float(mean_error),
-                processing_time=processing_time
+                mean_error=mean_error,
+                processing_time=processing_time,
+                local2world=result.get('local2world')  # Only present for fitting
             )
             
             # Update session
             session.result = triangulation_result
             session_manager.update_session_status(session_id, SessionStatus.COMPLETED)
             
-            logger.info(f"✅ Triangulation completed: {len(points_3d)} points, {mean_error:.3f}px error")
+            operation_name = "Fitting" if use_fitting else "Triangulation"
+            logger.info(f"✅ {operation_name} completed: {len(points_3d)} points, {mean_error:.3f}px error")
             
             # Broadcast completion
-            broadcast_sse_event('triangulation_completed', {
+            event_name = 'fitting_completed' if use_fitting else 'triangulation_completed'
+            broadcast_sse_event(event_name, {
                 'session_id': session_id,
                 'num_points': len(points_3d),
-                'mean_error': float(mean_error),
-                'processing_time': processing_time
+                'mean_error': mean_error,
+                'processing_time': processing_time,
+                'operation': 'fitting' if use_fitting else 'triangulation'
             })
         else:
             error_msg = result.get('error_message', 'Unknown error')
@@ -608,45 +702,33 @@ def init_session():
     """
     Initialize a new positioning session.
     
-    Request body:
+    Reference name will be specified per view in upload_view.
+    
+    Request body: 
     {
-        "reference_name": "checkerboard_11x8"
+        "timeout_minutes": 10  // Optional: per-session timeout in minutes (default: 10)
     }
     """
-    global session_manager, reference_images
+    global session_manager
     
     try:
-        if not request.is_json:
-            return jsonify({
-                'success': False,
-                'error': 'Request must be JSON'
-            }), 400
+        # Get optional timeout parameter
+        data = request.get_json() or {}
+        timeout_minutes = data.get('timeout_minutes')
         
-        data = request.get_json()
+        # Validate timeout if provided
+        if timeout_minutes is not None:
+            if not isinstance(timeout_minutes, (int, float)) or timeout_minutes <= 0:
+                return jsonify({
+                    'success': False,
+                    'error': 'timeout_minutes must be a positive number'
+                }), 400
+            timeout_minutes = int(timeout_minutes)
         
-        # Validate required fields
-        if 'reference_name' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Missing required field: reference_name'
-            }), 400
+        # Create session with optional timeout
+        session = session_manager.create_session(timeout_minutes=timeout_minutes)
         
-        reference_name = data['reference_name']
-        
-        # Validate reference exists
-        if reference_name not in reference_images:
-            return jsonify({
-                'success': False,
-                'error': f'Reference "{reference_name}" not found',
-                'available_references': list(reference_images.keys())
-            }), 404
-        
-        # Create session
-        session = session_manager.create_session(
-            reference_name=reference_name
-        )
-        
-        logger.info(f"Created session {session.session_id}")
+        logger.info(f"Created session {session.session_id} (timeout: {session.timeout_minutes}min)")
         
         # Broadcast event
         broadcast_sse_event('session_created', {
@@ -657,6 +739,7 @@ def init_session():
             'success': True,
             'session_id': session.session_id,
             'status': session.status.value,
+            'timeout_minutes': session.timeout_minutes,
             'timestamp': datetime.now().isoformat()
         })
         
@@ -698,7 +781,7 @@ def upload_view():
         data = request.get_json()
         
         # Validate required fields
-        required_fields = ['session_id', 'view_id', 'image_base64', 'camera_params']
+        required_fields = ['session_id', 'reference_name', 'view_id', 'image_base64', 'camera_params']
         for field in required_fields:
             if field not in data:
                 return jsonify({
@@ -707,9 +790,18 @@ def upload_view():
                 }), 400
         
         session_id = data['session_id']
+        reference_name = data['reference_name']
         view_id = data['view_id']
         image_base64 = data['image_base64']
         camera_params_dict = data['camera_params']
+        
+        # Validate reference exists
+        if reference_name not in reference_images:
+            return jsonify({
+                'success': False,
+                'error': f'Reference "{reference_name}" not found',
+                'available_references': list(reference_images.keys())
+            }), 404
         
         # Get session
         session = session_manager.get_session(session_id)
@@ -731,6 +823,7 @@ def upload_view():
         view = session_manager.add_view(
             session_id=session_id,
             view_id=view_id,
+            reference_name=reference_name,
             image_base64=image_base64,
             camera_params=camera_params
         )
@@ -747,7 +840,7 @@ def upload_view():
             task_id=task_id,
             session_id=session_id,
             view_id=view_id,
-            reference_name=session.reference_name,
+            reference_name=reference_name,
             image_base64=image_base64
         )
         
@@ -818,7 +911,7 @@ def session_status(session_id: str):
 
 @app.route("/result/<session_id>")
 def get_result(session_id: str):
-    """Get triangulation result for a session. Triggers triangulation on-demand."""
+    """Get triangulation or fitting result for a session. Triggers computation on-demand."""
     global session_manager
     
     session = session_manager.get_session(session_id)
@@ -828,11 +921,41 @@ def get_result(session_id: str):
             'error': f'Session not found: {session_id}'
         }), 404
     
+    # Parse request body for template_points parameter
+    template_points = None
+    if request.is_json:
+        data = request.get_json()
+        template_points = data.get('template_points')
+        
+        # Validate template points if provided
+        if template_points is not None:
+            if not isinstance(template_points, list):
+                return jsonify({
+                    'success': False,
+                    'error': 'template_points must be a list'
+                }), 400
+            
+            # Validate each point has name (x,y,z are optional)
+            for i, pt in enumerate(template_points):
+                if not isinstance(pt, dict):
+                    return jsonify({
+                        'success': False,
+                        'error': f'Point {i} must be a dictionary'
+                    }), 400
+                if 'name' not in pt:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Point {i} missing required field: name'
+                    }), 400
+            
+            logger.info(f"Session {session_id}: Using template_points with {len(template_points)} points")
+    
     # Get timeout from query parameter (default: 30 seconds)
     timeout_ms = int(request.args.get('timeout', 30000))
     
-    # Always trigger triangulation (allows re-triangulation with new views)
-    success = trigger_triangulation(session_id, wait_for_tracking=True, timeout_ms=timeout_ms)
+    # Always trigger triangulation (allows re-triangulation with new views or different templates)
+    success = trigger_triangulation(session_id, template_points=template_points, 
+                                   wait_for_tracking=True, timeout_ms=timeout_ms)
     
     if not success:
         # Check why it failed
@@ -871,16 +994,24 @@ def get_result(session_id: str):
     for view in session.views:
         if view.status == ViewStatus.TRACKED and view.keypoints_2d:
             views_data.append({
-                'keypoints_2d': view.keypoints_2d
+                'keypoints_2d': view.keypoints_2d,
+                'reference_name': view.reference_name
             })
     
-    return jsonify({
+    response_data = {
         'success': True,
         'session_id': session_id,
         'result': session.result.to_dict() if session.result else None,
         'views': views_data,
+        'fitting_mode': template_points is not None and all('x' in pt and 'y' in pt and 'z' in pt for pt in template_points),
         'timestamp': datetime.now().isoformat()
-    })
+    }
+    
+    # Add template points if available
+    if template_points:
+        response_data['template_points'] = template_points
+    
+    return jsonify(response_data)
 
 
 @app.route("/result_view_plane", methods=["POST"])
@@ -1311,7 +1442,7 @@ def initialize_service(ffpp_url: Optional[str] = None, dataset_path: Optional[st
     # Initialize session manager
     session_config = config.get('session', {})
     session_manager = SessionManager(
-        session_timeout_minutes=session_config.get('timeout_minutes', 30),
+        session_timeout_minutes=session_config.get('timeout_minutes', 10),
         max_sessions=session_config.get('max_concurrent_sessions', 50)
     )
     

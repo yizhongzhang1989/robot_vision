@@ -13,6 +13,7 @@ Date: November 2025
 import os
 import sys
 import time
+import json
 import numpy as np
 import cv2
 from pathlib import Path
@@ -23,6 +24,52 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
 from core.positioning_3d_webapi import Positioning3DWebAPIClient, load_camera_params_from_json
+
+
+def test_create_session_without_termination():
+    """
+    Test function: Create a session but do not terminate it.
+    
+    This test creates a session and leaves it open to test session timeout behavior.
+    The session will remain active until it expires based on inactivity timeout.
+    """
+    print("=" * 60)
+    print("Test: Create Session Without Termination")
+    print("=" * 60)
+    
+    # Initialize client
+    client = Positioning3DWebAPIClient()
+    
+    # Check service health
+    print("\n1. Checking service health...")
+    health = client.check_health()
+    
+    if not health.get('success'):
+        print(f"❌ Service not available: {health.get('error')}")
+        return False
+    
+    print(f"✅ Service is running")
+    
+    # Create session with custom timeout
+    print("\n2. Creating session...")
+    init_result = client.init_session(timeout_minutes=1)
+    
+    if not init_result.get('success'):
+        print(f"❌ Failed to create session: {init_result.get('error')}")
+        return False
+    
+    session_id = init_result['session_id']
+    timeout_minutes = init_result.get('timeout_minutes', 'unknown')
+    
+    print(f"✅ Session created: {session_id}")
+    print(f"   Timeout: {timeout_minutes} minutes")
+    print(f"   Status: {init_result.get('status')}")
+    
+    # Note: Session is NOT terminated - it will remain active until timeout
+    print("\n⚠️  Session left open (will expire after inactivity timeout)")
+    print(f"   Session will auto-expire after {timeout_minutes} minutes of inactivity")
+    
+    return True
 
 
 def test_upload_references():
@@ -161,9 +208,7 @@ def test_triangulation_from_images(test_data_dir=None):
     
     # Initialize session
     print(f"\n4. Initializing session...")
-    session_result = client.init_session(
-        reference_name=reference_name
-    )
+    session_result = client.init_session()
     
     if not session_result.get('success'):
         print(f"❌ Failed to initialize session: {session_result.get('error')}")
@@ -200,6 +245,7 @@ def test_triangulation_from_images(test_data_dir=None):
         
         result = client.upload_view(
             session_id=session_id,
+            reference_name=reference_name,
             image=image,
             intrinsic=intrinsic,
             distortion=distortion,
@@ -369,7 +415,7 @@ def test_triangulation_incremental(test_data_dir=None):
     
     # Initialize session
     print(f"\n4. Initializing session...")
-    session_result = client.init_session(reference_name=reference_name)
+    session_result = client.init_session()
     
     if not session_result.get('success'):
         print(f"❌ Failed to initialize session: {session_result.get('error')}")
@@ -410,6 +456,7 @@ def test_triangulation_incremental(test_data_dir=None):
             
             result = client.upload_view(
                 session_id=session_id,
+                reference_name=reference_name,
                 image=image,
                 intrinsic=intrinsic,
                 distortion=distortion,
@@ -636,30 +683,220 @@ def test_triangulation_concurrent():
         return False
 
 
+def test_triangulation_fitting(template_points_file, test_images) -> bool:
+    """Test triangulation with fitting mode using template points
+    
+    Demonstrates:
+    - Name-based keypoint matching across different reference images
+    - Using template_points parameter with complete 3D coordinates
+    - Estimating local-to-world transformation from rack corners
+    
+    Args:
+        template_points_file: Path to JSON file containing template points
+        test_images: List of tuples (reference_name, image_path) for test views
+    """
+    print("\n" + "=" * 80)
+    print("TEST: Triangulation with Fitting Mode")
+    print("=" * 80)
+    
+    try:
+        template_points_file = Path(template_points_file)
+        
+        # Step 1: Load template points (rack corners in local coordinates)
+        print("\n[1] Loading template points...")
+        print(f"  Template file: {template_points_file}")
+        
+        if not template_points_file.exists():
+            print(f"  ! Template file not found: {template_points_file}")
+            return False
+        
+        with open(template_points_file, 'r') as f:
+            data = json.load(f)
+            template_points = data.get('corner_points', [])
+        
+        if not template_points:
+            print(f"  ! No template points found in {template_points_file}")
+            return False
+        
+        print(f"  ✓ Loaded {len(template_points)} template points")
+        
+        # Step 2: Initialize session
+        print("\n[2] Initializing session...")
+        client = Positioning3DWebAPIClient()
+        
+        init_result = client.init_session()
+        if not init_result.get('success'):
+            print(f"  ! Failed to initialize: {init_result.get('error')}")
+            return False
+        
+        session_id = init_result['session_id']
+        print(f"  ✓ Session created: {session_id}")
+        
+        # Step 3: Upload views with camera poses from test images
+        print("\n[3] Uploading camera views...")
+        print(f"  Test images: {len(test_images)} views")
+        
+        views_uploaded = 0
+        for reference_name, img_path in test_images:
+            if not img_path.exists():
+                print(f"  ! Test image not found: {img_path}")
+                continue
+            
+            pose_file = img_path.parent / f"{img_path.stem}_pose.json"
+            if not pose_file.exists():
+                print(f"  ! Pose file not found: {pose_file}")
+                continue
+            
+            # Load image and camera params
+            image = cv2.imread(str(img_path))
+            if image is None:
+                print(f"  ! Failed to load image: {img_path}")
+                continue
+            
+            intrinsic, distortion, extrinsic = load_camera_params_from_json(str(pose_file))
+            
+            # Upload view
+            result = client.upload_view(
+                session_id=session_id,
+                reference_name=reference_name,
+                image=image,
+                intrinsic=intrinsic,
+                distortion=distortion,
+                extrinsic=extrinsic
+            )
+            
+            if result.get('success'):
+                views_uploaded += 1
+                print(f"  ✓ View {views_uploaded} uploaded: {reference_name}/{img_path.name}")
+            else:
+                print(f"  ! View upload failed for {reference_name}: {result.get('error')}")
+        
+        if views_uploaded < 1:
+            print(f"  ! No views uploaded successfully")
+            return False
+        
+        print(f"  Total: {views_uploaded} views uploaded")
+        
+        # Step 4: Get result with fitting
+        print("\n[4] Waiting for fitting result...")
+        print(f"  Using fitting mode with {len(template_points)} template points")
+        
+        result = client.get_result(
+            session_id=session_id,
+            template_points=template_points,
+            timeout=30000
+        )
+        
+        if not result.get('success'):
+            print(f"  ! Fitting failed: {result.get('error')}")
+            return False
+        
+        # Step 5: Display results
+        print("\n[5] Fitting Results:")
+        print("  " + "-" * 76)
+        
+        result_data = result.get('result', {})
+        
+        if 'local2world' in result_data:
+            local2world = result_data['local2world']
+            print("\n  Local-to-World Transformation Matrix:")
+            for row in local2world:
+                print(f"    [{row[0]:8.4f}  {row[1]:8.4f}  {row[2]:8.4f}  {row[3]:8.4f}]")
+        
+        if 'points_3d' in result_data:
+            points_3d = result_data['points_3d']
+            print(f"\n  3D Points in World Coordinates ({len(points_3d)} points):")
+            for i, pt in enumerate(points_3d[:5]):  # Show first 5
+                if pt is not None:
+                    print(f"    Point {i}: ({pt[0]:7.4f}, {pt[1]:7.4f}, {pt[2]:7.4f})")
+                else:
+                    print(f"    Point {i}: None")
+            if len(points_3d) > 5:
+                print(f"    ... and {len(points_3d) - 5} more points")
+        
+        mean_error = result_data.get('mean_error')
+        if mean_error is not None:
+            print(f"\n  Mean Reprojection Error: {mean_error:.3f} pixels")
+        
+        processing_time = result_data.get('processing_time')
+        if processing_time is not None:
+            print(f"  Processing Time: {processing_time:.3f} seconds")
+        
+        # Step 6: Cleanup
+        print("\n[6] Cleaning up...")
+        client.terminate_session(session_id)
+        print("  ✓ Session terminated")
+        
+        print("\n✓ Fitting test passed")
+        return True
+        
+    except Exception as e:
+        print(f"\n✗ Fitting test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def main():
     """Main function to run tests."""
     print("\n" + "=" * 60)
     print("3D Positioning Service - Web API Examples")
     print("=" * 60)
     
+    # Test 0: Create session without termination (to test timeout)
+    print("\n[Test 0/7] Create Session Without Termination")
+    success0 = test_create_session_without_termination()
+    
     # Test 1: Upload references
-    print("\n[Test 1/4] Upload References")
+    print("\n[Test 1/7] Upload References")
     success1 = test_upload_references()
     
     # Test 2: Triangulation from images
-    print("\n[Test 2/4] Triangulation from Images")
+    print("\n[Test 2/7] Triangulation from Images")
     success2 = test_triangulation_from_images()
     
     # Test 3: Incremental triangulation
-    print("\n[Test 3/4] Incremental Triangulation")
+    print("\n[Test 3/7] Incremental Triangulation")
     success3 = test_triangulation_incremental()
     
     # Test 4: Sequential triangulation
-    print("\n[Test 4/4] Sequential Triangulation")
+    print("\n[Test 4/7] Sequential Triangulation")
     success4 = test_triangulation_sequential()
     
+    # Test 5: Concurrent triangulation
+    print("\n[Test 5/7] Concurrent Triangulation")
+    success5 = test_triangulation_concurrent()
+    
+    # Test 6: Fitting mode triangulation
+    print("\n[Test 6/7] Fitting Mode Triangulation")
+    
+    # Configure fitting test parameters
+    project_root = Path(__file__).parent.parent
+    template_points_file = project_root / "dataset" / "rack_local.json"
+    test_images = [
+        ('rack1', project_root / "dataset" / "rack1" / "test" / "session_001" / "0.jpg"),
+        ('rack2', project_root / "dataset" / "rack2" / "test" / "session_001" / "0.jpg"),
+        ('rack3', project_root / "dataset" / "rack3" / "test" / "session_001" / "0.jpg")
+    ]
+    
+    success6 = test_triangulation_fitting(template_points_file, test_images)
+    
+    # Test 7: Fitting mode triangulation with more views
+    print("\n[Test 7/7] Fitting Mode Triangulation (Multi-view)")
+    
+    # Configure fitting test parameters with more views
+    test_images_multi = [
+        ('rack1', project_root / "dataset" / "rack1" / "test" / "session_001" / "0.jpg"),
+        ('rack1', project_root / "dataset" / "rack1" / "test" / "session_001" / "1.jpg"),
+        ('rack2', project_root / "dataset" / "rack2" / "test" / "session_001" / "0.jpg"),
+        ('rack2', project_root / "dataset" / "rack2" / "test" / "session_001" / "1.jpg"),
+        ('rack3', project_root / "dataset" / "rack3" / "test" / "session_001" / "0.jpg")
+    ]
+    
+    success7 = test_triangulation_fitting(template_points_file, test_images_multi)
+
     # Summary
-    if success1 and success2 and success3 and success4:
+    if success0 and success1 and success2 and success3 and success4 and success5 and success6 and success7:
         print("\n" + "=" * 60)
         print("✅ All tests passed!")
         print("=" * 60)
@@ -677,6 +914,9 @@ def main():
         print("\n4. Verify test images exist:")
         print("   dataset/ur_locate_push2end_data/test/test_img_20251118/*.jpg")
         print("   dataset/ur_locate_push2end_data/test/test_img_20251118/*_pose.json")
+        print("\n5. For fitting test, verify rack test images and template exist:")
+        print("   dataset/rack1/test/session_001/0.jpg")
+        print("   dataset/rack_local.json")
 
 
 if __name__ == "__main__":
