@@ -24,12 +24,12 @@ class SessionManager:
     Thread-safe session storage and lifecycle management.
     """
     
-    def __init__(self, session_timeout_minutes: int = 30, max_sessions: int = 100):
+    def __init__(self, session_timeout_minutes: int = 10, max_sessions: int = 100):
         """
         Initialize session manager.
         
         Args:
-            session_timeout_minutes: Session timeout in minutes
+            session_timeout_minutes: Session timeout in minutes after last access (default: 10)
             max_sessions: Maximum concurrent sessions
         """
         self.sessions: Dict[str, RobotSession] = {}
@@ -37,18 +37,18 @@ class SessionManager:
         self.max_sessions = max_sessions
         self.lock = threading.RLock()
         
-        logger.info(f"Session manager initialized (timeout={session_timeout_minutes}min, max={max_sessions})")
+        logger.info(f"Session manager initialized (timeout={session_timeout_minutes}min after last access, max={max_sessions})")
     
-    def create_session(
-        self,
-        reference_name: str
-    ) -> RobotSession:
+    def create_session(self, timeout_minutes: Optional[int] = None) -> RobotSession:
         """
         Create a new positioning session.
         
+        Reference names will be specified per view.
+        
         Args:
-            reference_name: Reference image name to use
-            
+            timeout_minutes: Optional per-session timeout in minutes. 
+                           If not specified, uses default session timeout.
+        
         Returns:
             Created RobotSession
             
@@ -65,39 +65,47 @@ class SessionManager:
                     raise ValueError(f"Maximum concurrent sessions ({self.max_sessions}) reached")
             
             # Generate session ID
-            session_id = f"session_{reference_name}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            session_id = f"session_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            
+            # Use provided timeout or default
+            session_timeout = timeout_minutes if timeout_minutes is not None else int(self.session_timeout.total_seconds() / 60)
             
             # Create session
             session = RobotSession(
                 session_id=session_id,
                 robot_id='default',
-                reference_name=reference_name,
-                status=SessionStatus.PENDING
+                status=SessionStatus.PENDING,
+                timeout_minutes=session_timeout
             )
             
             self.sessions[session_id] = session
             
-            logger.info(f"Created session {session_id}")
+            logger.info(f"Created session {session_id} (timeout: {session_timeout}min)")
             
             return session
     
-    def get_session(self, session_id: str) -> Optional[RobotSession]:
+    def get_session(self, session_id: str, update_access_time: bool = True) -> Optional[RobotSession]:
         """
-        Get session by ID.
+        Get session by ID and update last access time.
         
         Args:
             session_id: Session identifier
+            update_access_time: Whether to update last_accessed_at timestamp (default: True)
             
         Returns:
             RobotSession or None if not found
         """
         with self.lock:
-            return self.sessions.get(session_id)
+            session = self.sessions.get(session_id)
+            if session and update_access_time:
+                session.last_accessed_at = datetime.now()
+            return session
     
     def add_view(
         self,
         session_id: str,
         view_id: str,
+        reference_name: str,
         image_base64: str,
         camera_params: CameraParams
     ) -> Optional[View]:
@@ -107,6 +115,7 @@ class SessionManager:
         Args:
             session_id: Session identifier
             view_id: View identifier
+            reference_name: Reference image to use for this view
             image_base64: Image as base64 string
             camera_params: Camera parameters
             
@@ -123,6 +132,7 @@ class SessionManager:
             view = View(
                 view_id=view_id,
                 session_id=session_id,
+                reference_name=reference_name,
                 image_base64=image_base64,
                 camera_params=camera_params,
                 status=ViewStatus.RECEIVED
@@ -277,15 +287,16 @@ class SessionManager:
     
     def cleanup_sessions(self, force_timeout: Optional[timedelta] = None) -> int:
         """
-        Clean up timed-out sessions.
+        Clean up timed-out sessions based on last access time.
+        Uses per-session timeout if available.
+        Timed-out sessions are immediately removed from the system.
         
         Args:
-            force_timeout: Override default timeout (optional)
+            force_timeout: Override all session timeouts (optional)
             
         Returns:
             Number of sessions cleaned up
         """
-        timeout = force_timeout or self.session_timeout
         now = datetime.now()
         cleaned = 0
         
@@ -293,24 +304,30 @@ class SessionManager:
             sessions_to_remove = []
             
             for session_id, session in self.sessions.items():
-                # Check timeout for non-completed sessions
-                if session.status not in [SessionStatus.COMPLETED, SessionStatus.FAILED]:
-                    age = now - session.updated_at
+                # Check timeout for non-completed sessions based on last access time
+                if session.status not in [SessionStatus.COMPLETED, SessionStatus.FAILED, SessionStatus.TIMEOUT]:
+                    time_since_last_access = now - session.last_accessed_at
                     
-                    if age > timeout:
-                        logger.warning(f"Session {session_id} timed out (age: {age})")
-                        session.status = SessionStatus.TIMEOUT
-                        session.completed_at = now
+                    # Use per-session timeout or force_timeout if provided
+                    if force_timeout:
+                        timeout = force_timeout
+                    else:
+                        timeout = timedelta(minutes=session.timeout_minutes)
+                    
+                    if time_since_last_access > timeout:
+                        logger.warning(f"Session {session_id} timed out and will be removed (inactive for: {time_since_last_access}, timeout: {session.timeout_minutes}min)")
                         sessions_to_remove.append(session_id)
                         cleaned += 1
                 
-                # Remove old completed sessions (keep for 1 hour after completion)
-                elif session.completed_at:
-                    age = now - session.completed_at
-                    if age > timedelta(hours=1):
-                        logger.info(f"Removing old completed session {session_id}")
-                        sessions_to_remove.append(session_id)
-                        cleaned += 1
+                # Remove completed/failed sessions immediately (no grace period)
+                elif session.status in [SessionStatus.COMPLETED, SessionStatus.FAILED, SessionStatus.TIMEOUT]:
+                    # For completed sessions, remove after 5 minutes to allow result retrieval
+                    if session.completed_at:
+                        age = now - session.completed_at
+                        if age > timedelta(minutes=5):
+                            logger.info(f"Removing completed session {session_id} ({session.status.value})")
+                            sessions_to_remove.append(session_id)
+                            cleaned += 1
             
             # Remove sessions
             for session_id in sessions_to_remove:
