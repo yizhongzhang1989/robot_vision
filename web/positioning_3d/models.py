@@ -94,8 +94,8 @@ class View:
 class TriangulationResult:
     """Result of 3D triangulation."""
     success: bool
-    points_3d: Optional[np.ndarray] = None
-    reprojection_errors: Optional[List[np.ndarray]] = None
+    points_3d: Optional[Any] = None  # Can be np.ndarray or List[np.ndarray or None]
+    reprojection_errors: Optional[Any] = None  # Can be List[np.ndarray] or List[List[float or None]]
     mean_error: Optional[float] = None
     error_message: Optional[str] = None
     processing_time: Optional[float] = None
@@ -109,15 +109,30 @@ class TriangulationResult:
         }
         
         if self.success and self.points_3d is not None:
-            data['points_3d'] = self.points_3d.tolist()
+            # Handle both np.ndarray and List formats (List may contain None values)
+            if isinstance(self.points_3d, np.ndarray):
+                data['points_3d'] = self.points_3d.tolist()
+            else:
+                # It's a list, convert numpy arrays to lists, keep None as None
+                data['points_3d'] = [
+                    pt.tolist() if pt is not None else None
+                    for pt in self.points_3d
+                ]
+            
             data['num_points'] = len(self.points_3d)
             data['mean_error'] = self.mean_error
             
             if self.reprojection_errors:
-                data['reprojection_errors'] = [
-                    errors.tolist() if isinstance(errors, np.ndarray) else errors
-                    for errors in self.reprojection_errors
-                ]
+                # Handle nested list format with potential None values
+                data['reprojection_errors'] = []
+                for errors in self.reprojection_errors:
+                    if isinstance(errors, np.ndarray):
+                        data['reprojection_errors'].append(errors.tolist())
+                    elif isinstance(errors, list):
+                        # List may contain None values
+                        data['reprojection_errors'].append(errors)
+                    else:
+                        data['reprojection_errors'].append(errors)
                 
         return data
 
