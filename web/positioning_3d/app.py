@@ -298,7 +298,7 @@ def handle_tracking_task(task: TrackingTask) -> bool:
         result_data = result.get('result', {})
         tracked_keypoints = result_data.get('tracked_keypoints', [])
         
-        # Convert to standard format with embedded accuracy
+        # Convert to standard format with embedded accuracy and name
         keypoints_2d = []
         
         for kp in tracked_keypoints:
@@ -306,9 +306,14 @@ def handle_tracking_task(task: TrackingTask) -> bool:
                 # Old format: [x, y]
                 keypoints_2d.append({'x': float(kp[0]), 'y': float(kp[1])})
             elif isinstance(kp, dict):
-                # New format: {'x': x, 'y': y, 'consistency_distance': dist, ...}
+                # New format: {'x': x, 'y': y, 'name': name, 'consistency_distance': dist, ...}
                 if 'x' in kp and 'y' in kp:
                     keypoint_dict = {'x': float(kp['x']), 'y': float(kp['y'])}
+                    
+                    # Preserve name if available
+                    name = kp.get('name')
+                    if name is not None:
+                        keypoint_dict['name'] = str(name)
                     
                     # Embed consistency_distance (smaller is better)
                     consistency_dist = kp.get('consistency_distance')
@@ -608,43 +613,15 @@ def init_session():
     """
     Initialize a new positioning session.
     
-    Request body:
-    {
-        "reference_name": "checkerboard_11x8"
-    }
+    Reference name will be specified per view in upload_view.
+    
+    Request body: {} (empty JSON)
     """
-    global session_manager, reference_images
+    global session_manager
     
     try:
-        if not request.is_json:
-            return jsonify({
-                'success': False,
-                'error': 'Request must be JSON'
-            }), 400
-        
-        data = request.get_json()
-        
-        # Validate required fields
-        if 'reference_name' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Missing required field: reference_name'
-            }), 400
-        
-        reference_name = data['reference_name']
-        
-        # Validate reference exists
-        if reference_name not in reference_images:
-            return jsonify({
-                'success': False,
-                'error': f'Reference "{reference_name}" not found',
-                'available_references': list(reference_images.keys())
-            }), 404
-        
         # Create session
-        session = session_manager.create_session(
-            reference_name=reference_name
-        )
+        session = session_manager.create_session()
         
         logger.info(f"Created session {session.session_id}")
         
@@ -698,7 +675,7 @@ def upload_view():
         data = request.get_json()
         
         # Validate required fields
-        required_fields = ['session_id', 'view_id', 'image_base64', 'camera_params']
+        required_fields = ['session_id', 'reference_name', 'view_id', 'image_base64', 'camera_params']
         for field in required_fields:
             if field not in data:
                 return jsonify({
@@ -707,9 +684,18 @@ def upload_view():
                 }), 400
         
         session_id = data['session_id']
+        reference_name = data['reference_name']
         view_id = data['view_id']
         image_base64 = data['image_base64']
         camera_params_dict = data['camera_params']
+        
+        # Validate reference exists
+        if reference_name not in reference_images:
+            return jsonify({
+                'success': False,
+                'error': f'Reference "{reference_name}" not found',
+                'available_references': list(reference_images.keys())
+            }), 404
         
         # Get session
         session = session_manager.get_session(session_id)
@@ -731,6 +717,7 @@ def upload_view():
         view = session_manager.add_view(
             session_id=session_id,
             view_id=view_id,
+            reference_name=reference_name,
             image_base64=image_base64,
             camera_params=camera_params
         )
@@ -747,7 +734,7 @@ def upload_view():
             task_id=task_id,
             session_id=session_id,
             view_id=view_id,
-            reference_name=session.reference_name,
+            reference_name=reference_name,
             image_base64=image_base64
         )
         
@@ -871,7 +858,8 @@ def get_result(session_id: str):
     for view in session.views:
         if view.status == ViewStatus.TRACKED and view.keypoints_2d:
             views_data.append({
-                'keypoints_2d': view.keypoints_2d
+                'keypoints_2d': view.keypoints_2d,
+                'reference_name': view.reference_name
             })
     
     return jsonify({

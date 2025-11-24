@@ -54,6 +54,7 @@ class View:
     """Single camera view in a positioning session."""
     view_id: str
     session_id: str
+    reference_name: str  # Reference image to use for this view
     image: Optional[np.ndarray] = None
     image_base64: Optional[str] = None  # For storage/display
     camera_params: Optional[CameraParams] = None
@@ -68,6 +69,7 @@ class View:
         data = {
             'view_id': self.view_id,
             'session_id': self.session_id,
+            'reference_name': self.reference_name,
             'status': self.status.value,
             'timestamp': self.timestamp.isoformat(),
             'error_message': self.error_message,
@@ -125,7 +127,6 @@ class RobotSession:
     """A robot positioning session with multiple views."""
     session_id: str
     robot_id: str
-    reference_name: str
     views: List[View] = field(default_factory=list)
     status: SessionStatus = SessionStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
@@ -158,7 +159,6 @@ class RobotSession:
         data = {
             'session_id': self.session_id,
             'robot_id': self.robot_id,
-            'reference_name': self.reference_name,
             'status': self.status.value,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),

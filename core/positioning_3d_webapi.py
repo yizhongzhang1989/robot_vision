@@ -130,24 +130,17 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
-    def init_session(self, reference_name: str) -> Dict:
+    def init_session(self) -> Dict:
         """
         Initialize a new positioning session.
         
-        Args:
-            reference_name: Name of the reference image to use
-            
         Returns:
             Response with session_id if successful
         """
         try:
-            payload = {
-                'reference_name': reference_name
-            }
-            
             response = self.session.post(
                 f"{self.service_url}/init_session",
-                json=payload,
+                json={},
                 timeout=30
             )
             response.raise_for_status()
@@ -159,7 +152,7 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
-    def upload_view(self, session_id: str, image: np.ndarray,
+    def upload_view(self, session_id: str, reference_name: str, image: np.ndarray,
                    intrinsic: np.ndarray, distortion: Optional[np.ndarray],
                    extrinsic: np.ndarray) -> Dict:
         """
@@ -167,6 +160,7 @@ class Positioning3DWebAPIClient:
         
         Args:
             session_id: Session identifier from init_session
+            reference_name: Name of the reference image to use for tracking
             image: Camera image as numpy array (BGR or RGB)
             intrinsic: 3x3 camera intrinsic matrix
             distortion: Distortion coefficients (optional, can be None)
@@ -199,6 +193,7 @@ class Positioning3DWebAPIClient:
             # Prepare payload
             payload = {
                 'session_id': session_id,
+                'reference_name': reference_name,
                 'view_id': view_id,
                 'image_base64': image_base64,
                 'camera_params': camera_params

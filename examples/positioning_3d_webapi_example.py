@@ -161,9 +161,7 @@ def test_triangulation_from_images(test_data_dir=None):
     
     # Initialize session
     print(f"\n4. Initializing session...")
-    session_result = client.init_session(
-        reference_name=reference_name
-    )
+    session_result = client.init_session()
     
     if not session_result.get('success'):
         print(f"❌ Failed to initialize session: {session_result.get('error')}")
@@ -200,6 +198,7 @@ def test_triangulation_from_images(test_data_dir=None):
         
         result = client.upload_view(
             session_id=session_id,
+            reference_name=reference_name,
             image=image,
             intrinsic=intrinsic,
             distortion=distortion,
@@ -369,7 +368,7 @@ def test_triangulation_incremental(test_data_dir=None):
     
     # Initialize session
     print(f"\n4. Initializing session...")
-    session_result = client.init_session(reference_name=reference_name)
+    session_result = client.init_session()
     
     if not session_result.get('success'):
         print(f"❌ Failed to initialize session: {session_result.get('error')}")
@@ -410,6 +409,7 @@ def test_triangulation_incremental(test_data_dir=None):
             
             result = client.upload_view(
                 session_id=session_id,
+                reference_name=reference_name,
                 image=image,
                 intrinsic=intrinsic,
                 distortion=distortion,

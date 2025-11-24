@@ -39,16 +39,12 @@ class SessionManager:
         
         logger.info(f"Session manager initialized (timeout={session_timeout_minutes}min, max={max_sessions})")
     
-    def create_session(
-        self,
-        reference_name: str
-    ) -> RobotSession:
+    def create_session(self) -> RobotSession:
         """
         Create a new positioning session.
         
-        Args:
-            reference_name: Reference image name to use
-            
+        Reference names will be specified per view.
+        
         Returns:
             Created RobotSession
             
@@ -65,13 +61,12 @@ class SessionManager:
                     raise ValueError(f"Maximum concurrent sessions ({self.max_sessions}) reached")
             
             # Generate session ID
-            session_id = f"session_{reference_name}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+            session_id = f"session_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             
             # Create session
             session = RobotSession(
                 session_id=session_id,
                 robot_id='default',
-                reference_name=reference_name,
                 status=SessionStatus.PENDING
             )
             
@@ -98,6 +93,7 @@ class SessionManager:
         self,
         session_id: str,
         view_id: str,
+        reference_name: str,
         image_base64: str,
         camera_params: CameraParams
     ) -> Optional[View]:
@@ -107,6 +103,7 @@ class SessionManager:
         Args:
             session_id: Session identifier
             view_id: View identifier
+            reference_name: Reference image to use for this view
             image_base64: Image as base64 string
             camera_params: Camera parameters
             
@@ -123,6 +120,7 @@ class SessionManager:
             view = View(
                 view_id=view_id,
                 session_id=session_id,
+                reference_name=reference_name,
                 image_base64=image_base64,
                 camera_params=camera_params,
                 status=ViewStatus.RECEIVED
