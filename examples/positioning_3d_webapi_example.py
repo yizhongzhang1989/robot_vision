@@ -643,23 +643,27 @@ def main():
     print("=" * 60)
     
     # Test 1: Upload references
-    print("\n[Test 1/4] Upload References")
+    print("\n[Test 1/5] Upload References")
     success1 = test_upload_references()
     
     # Test 2: Triangulation from images
-    print("\n[Test 2/4] Triangulation from Images")
+    print("\n[Test 2/5] Triangulation from Images")
     success2 = test_triangulation_from_images()
     
     # Test 3: Incremental triangulation
-    print("\n[Test 3/4] Incremental Triangulation")
+    print("\n[Test 3/5] Incremental Triangulation")
     success3 = test_triangulation_incremental()
     
     # Test 4: Sequential triangulation
-    print("\n[Test 4/4] Sequential Triangulation")
+    print("\n[Test 4/5] Sequential Triangulation")
     success4 = test_triangulation_sequential()
     
+    # Test 5: Concurrent triangulation
+    print("\n[Test 5/5] Concurrent Triangulation")
+    success5 = test_triangulation_concurrent()
+    
     # Summary
-    if success1 and success2 and success3 and success4:
+    if success1 and success2 and success3 and success4 and success5:
         print("\n" + "=" * 60)
         print("✅ All tests passed!")
         print("=" * 60)
