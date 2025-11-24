@@ -390,59 +390,87 @@ def fitting_multiview(view_data: List[Dict], target_point3d_local: List[np.ndarr
         # convert target points to array
         model_pts = np.array([np.asarray(p, dtype=np.float64).reshape(3,) for p in target_point3d_local], dtype=np.float64)
 
-        # --- undistort points for each view and prepare projection matrices
-        undistorted_views = []
-        proj_mats, cam_centers = _build_projection_matrices_and_centers(view_data)
-        # also prepare per-view extrinsic R,t and K, distortion
+        # --- Prepare per-view camera parameters (no undistortion preprocessing)
         view_K = []
         view_R = []
         view_t = []
         view_dist = []
+        view_points_2d = []  # Store original distorted points
+        
         for v in view_data:
             K = np.array(v['intrinsic'], dtype=np.float64)
             extrinsic = np.array(v['extrinsic'], dtype=np.float64)
             Rm = extrinsic[:3, :3]
             t = extrinsic[:3, 3]
-            dist = np.array(v['distortion'], dtype=np.float64) if 'distortion' in v else None
-            und = _undistort_points_for_view(v['points_2d'], K, dist)
-            undistorted_views.append(und)
+            dist = np.array(v['distortion'], dtype=np.float64) if 'distortion' in v else np.zeros(5, dtype=np.float64)
             view_K.append(K)
             view_R.append(Rm)
             view_t.append(t)
             view_dist.append(dist)
+            view_points_2d.append(v['points_2d'])
 
         # --- prepare "rays" in world coordinates for each observation
         # rays_per_obs: list (view) of lists (per point) of either None or (O_world, v_world)
         rays_per_view = []
-        for vidx, und in enumerate(undistorted_views):
+        for vidx in range(len(view_data)):
             K = view_K[vidx]
+            dist = view_dist[vidx]
             R_wc = view_R[vidx]  # world->camera
             t_wc = view_t[vidx]
             O_world = -R_wc.T @ t_wc
             view_rays = []
-            for p in und:
+            
+            for pi in range(N):
+                p = view_points_2d[vidx][pi]
                 if p is None:
                     view_rays.append(None)
                 else:
-                    d_cam = _pixel_to_camera_ray(np.asarray(p, dtype=np.float64), K)
+                    # Convert distorted pixel to normalized camera coordinates using cv2.undistortPoints
+                    p_array = np.array([[p]], dtype=np.float32)
+                    normalized = cv2.undistortPoints(p_array, K, dist, P=None)
+                    normalized = normalized.reshape(2,)
+                    
+                    # Create ray in camera coordinates
+                    d_cam = np.array([normalized[0], normalized[1], 1.0], dtype=np.float64)
+                    d_cam = d_cam / np.linalg.norm(d_cam)
+                    
+                    # Transform to world coordinates
                     v_world = R_wc.T @ d_cam
                     v_world = v_world / np.linalg.norm(v_world)
                     view_rays.append((O_world.copy(), v_world.copy()))
             rays_per_view.append(view_rays)
 
         # --- TRY to triangulate model points that have >=2 observations (to get world points)
+        # For triangulation, we need undistorted normalized coordinates
         triangulated_world = [None] * N
         for pi in range(N):
-            pts2d = []
-            Pmats = []
+            # Collect undistorted normalized points for this point across views
+            pts_normalized = []
+            Ks = []
+            Rs = []
+            ts = []
+            
             for vidx in range(len(view_data)):
-                uv = undistorted_views[vidx][pi]
-                if uv is not None:
-                    pts2d.append(uv)
-                    Pmats.append(proj_mats[vidx])
-            if len(pts2d) >= 2:
+                p = view_points_2d[vidx][pi]
+                if p is not None:
+                    # Undistort to normalized coordinates
+                    p_array = np.array([[p]], dtype=np.float32)
+                    normalized = cv2.undistortPoints(p_array, view_K[vidx], view_dist[vidx], P=None)
+                    pts_normalized.append(normalized.reshape(2,))
+                    Ks.append(view_K[vidx])
+                    Rs.append(view_R[vidx])
+                    ts.append(view_t[vidx])
+            
+            if len(pts_normalized) >= 2:
                 try:
-                    Xw = _triangulate_dlt_local(pts2d, Pmats)
+                    # Build projection matrices from undistorted normalized coords
+                    # P = K @ [R|t], but for normalized coords we use identity K
+                    proj_mats = []
+                    for R, t in zip(Rs, ts):
+                        RT = np.hstack([R, t.reshape(3, 1)])
+                        proj_mats.append(RT)  # No K needed for normalized coords
+                    
+                    Xw = _triangulate_dlt_local(pts_normalized, proj_mats)
                     triangulated_world[pi] = Xw
                 except Exception:
                     triangulated_world[pi] = None
