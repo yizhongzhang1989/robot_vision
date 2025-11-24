@@ -704,15 +704,31 @@ def init_session():
     
     Reference name will be specified per view in upload_view.
     
-    Request body: {} (empty JSON)
+    Request body: 
+    {
+        "timeout_minutes": 10  // Optional: per-session timeout in minutes (default: 10)
+    }
     """
     global session_manager
     
     try:
-        # Create session
-        session = session_manager.create_session()
+        # Get optional timeout parameter
+        data = request.get_json() or {}
+        timeout_minutes = data.get('timeout_minutes')
         
-        logger.info(f"Created session {session.session_id}")
+        # Validate timeout if provided
+        if timeout_minutes is not None:
+            if not isinstance(timeout_minutes, (int, float)) or timeout_minutes <= 0:
+                return jsonify({
+                    'success': False,
+                    'error': 'timeout_minutes must be a positive number'
+                }), 400
+            timeout_minutes = int(timeout_minutes)
+        
+        # Create session with optional timeout
+        session = session_manager.create_session(timeout_minutes=timeout_minutes)
+        
+        logger.info(f"Created session {session.session_id} (timeout: {session.timeout_minutes}min)")
         
         # Broadcast event
         broadcast_sse_event('session_created', {
@@ -723,6 +739,7 @@ def init_session():
             'success': True,
             'session_id': session.session_id,
             'status': session.status.value,
+            'timeout_minutes': session.timeout_minutes,
             'timestamp': datetime.now().isoformat()
         })
         
@@ -1425,7 +1442,7 @@ def initialize_service(ffpp_url: Optional[str] = None, dataset_path: Optional[st
     # Initialize session manager
     session_config = config.get('session', {})
     session_manager = SessionManager(
-        session_timeout_minutes=session_config.get('timeout_minutes', 30),
+        session_timeout_minutes=session_config.get('timeout_minutes', 10),
         max_sessions=session_config.get('max_concurrent_sessions', 50)
     )
     

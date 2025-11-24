@@ -26,6 +26,52 @@ sys.path.insert(0, project_root)
 from core.positioning_3d_webapi import Positioning3DWebAPIClient, load_camera_params_from_json
 
 
+def test_create_session_without_termination():
+    """
+    Test function: Create a session but do not terminate it.
+    
+    This test creates a session and leaves it open to test session timeout behavior.
+    The session will remain active until it expires based on inactivity timeout.
+    """
+    print("=" * 60)
+    print("Test: Create Session Without Termination")
+    print("=" * 60)
+    
+    # Initialize client
+    client = Positioning3DWebAPIClient()
+    
+    # Check service health
+    print("\n1. Checking service health...")
+    health = client.check_health()
+    
+    if not health.get('success'):
+        print(f"❌ Service not available: {health.get('error')}")
+        return False
+    
+    print(f"✅ Service is running")
+    
+    # Create session with custom timeout
+    print("\n2. Creating session...")
+    init_result = client.init_session(timeout_minutes=1)
+    
+    if not init_result.get('success'):
+        print(f"❌ Failed to create session: {init_result.get('error')}")
+        return False
+    
+    session_id = init_result['session_id']
+    timeout_minutes = init_result.get('timeout_minutes', 'unknown')
+    
+    print(f"✅ Session created: {session_id}")
+    print(f"   Timeout: {timeout_minutes} minutes")
+    print(f"   Status: {init_result.get('status')}")
+    
+    # Note: Session is NOT terminated - it will remain active until timeout
+    print("\n⚠️  Session left open (will expire after inactivity timeout)")
+    print(f"   Session will auto-expire after {timeout_minutes} minutes of inactivity")
+    
+    return True
+
+
 def test_upload_references():
     """
     Test function: Upload reference images to FFPP server.
@@ -797,28 +843,32 @@ def main():
     print("3D Positioning Service - Web API Examples")
     print("=" * 60)
     
+    # Test 0: Create session without termination (to test timeout)
+    print("\n[Test 0/7] Create Session Without Termination")
+    success0 = test_create_session_without_termination()
+    
     # Test 1: Upload references
-    print("\n[Test 1/6] Upload References")
+    print("\n[Test 1/7] Upload References")
     success1 = test_upload_references()
     
     # Test 2: Triangulation from images
-    print("\n[Test 2/6] Triangulation from Images")
+    print("\n[Test 2/7] Triangulation from Images")
     success2 = test_triangulation_from_images()
     
     # Test 3: Incremental triangulation
-    print("\n[Test 3/6] Incremental Triangulation")
+    print("\n[Test 3/7] Incremental Triangulation")
     success3 = test_triangulation_incremental()
     
     # Test 4: Sequential triangulation
-    print("\n[Test 4/6] Sequential Triangulation")
+    print("\n[Test 4/7] Sequential Triangulation")
     success4 = test_triangulation_sequential()
     
     # Test 5: Concurrent triangulation
-    print("\n[Test 5/6] Concurrent Triangulation")
+    print("\n[Test 5/7] Concurrent Triangulation")
     success5 = test_triangulation_concurrent()
     
     # Test 6: Fitting mode triangulation
-    print("\n[Test 6/6] Fitting Mode Triangulation")
+    print("\n[Test 6/7] Fitting Mode Triangulation")
     
     # Configure fitting test parameters
     project_root = Path(__file__).parent.parent
@@ -831,13 +881,11 @@ def main():
     
     success6 = test_triangulation_fitting(template_points_file, test_images)
     
-    # Test 7: Fitting mode triangulation
-    print("\n[Test 7/7] Fitting Mode Triangulation")
+    # Test 7: Fitting mode triangulation with more views
+    print("\n[Test 7/7] Fitting Mode Triangulation (Multi-view)")
     
-    # Configure fitting test parameters
-    project_root = Path(__file__).parent.parent
-    template_points_file = project_root / "dataset" / "rack_local.json"
-    test_images = [
+    # Configure fitting test parameters with more views
+    test_images_multi = [
         ('rack1', project_root / "dataset" / "rack1" / "test" / "session_001" / "0.jpg"),
         ('rack1', project_root / "dataset" / "rack1" / "test" / "session_001" / "1.jpg"),
         ('rack2', project_root / "dataset" / "rack2" / "test" / "session_001" / "0.jpg"),
@@ -845,10 +893,10 @@ def main():
         ('rack3', project_root / "dataset" / "rack3" / "test" / "session_001" / "0.jpg")
     ]
     
-    success7 = test_triangulation_fitting(template_points_file, test_images)
+    success7 = test_triangulation_fitting(template_points_file, test_images_multi)
 
     # Summary
-    if success1 and success2 and success3 and success4 and success5 and success6 and success7:
+    if success0 and success1 and success2 and success3 and success4 and success5 and success6 and success7:
         print("\n" + "=" * 60)
         print("✅ All tests passed!")
         print("=" * 60)

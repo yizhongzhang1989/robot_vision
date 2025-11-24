@@ -130,17 +130,26 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
-    def init_session(self) -> Dict:
+    def init_session(self, timeout_minutes: Optional[int] = None) -> Dict:
         """
         Initialize a new positioning session.
         
+        Args:
+            timeout_minutes: Optional per-session timeout in minutes.
+                           Session expires after this many minutes of inactivity.
+                           Default: 10 minutes (server default)
+        
         Returns:
-            Response with session_id if successful
+            Response with session_id and timeout_minutes if successful
         """
         try:
+            request_data = {}
+            if timeout_minutes is not None:
+                request_data['timeout_minutes'] = timeout_minutes
+            
             response = self.session.post(
                 f"{self.service_url}/init_session",
-                json={},
+                json=request_data,
                 timeout=30
             )
             response.raise_for_status()

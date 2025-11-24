@@ -151,9 +151,11 @@ class RobotSession:
     status: SessionStatus = SessionStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
+    last_accessed_at: datetime = field(default_factory=datetime.now)
     completed_at: Optional[datetime] = None
     result: Optional[TriangulationResult] = None
     error_message: Optional[str] = None
+    timeout_minutes: int = 10  # Per-session timeout in minutes
     
     def get_progress(self) -> Dict[str, Any]:
         """Get current session progress."""
@@ -182,8 +184,10 @@ class RobotSession:
             'status': self.status.value,
             'created_at': self.created_at.isoformat(),
             'updated_at': self.updated_at.isoformat(),
+            'last_accessed_at': self.last_accessed_at.isoformat(),
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
             'error_message': self.error_message,
+            'timeout_minutes': self.timeout_minutes,
             'progress': self.get_progress()
         }
         
