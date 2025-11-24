@@ -17,7 +17,7 @@ import time
 import base64
 import numpy as np
 import cv2
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 
 class Positioning3DWebAPIClient:
@@ -233,27 +233,60 @@ class Positioning3DWebAPIClient:
                 'error': str(e)
             }
     
-    def get_result(self, session_id: str, timeout: int = 30000) -> Dict:
+    def get_result(self, session_id: str, 
+                   template_points: Optional[list] = None,
+                   timeout: int = 30000) -> Dict:
         """
-        Get triangulation result for a session.
+        Get triangulation or fitting result for a session.
         
-        Triggers on-demand triangulation if not already completed.
-        Server will wait for pending views to be tracked before triangulation.
+        Triggers on-demand computation if not already completed.
+        Server will wait for pending views to be tracked before computation.
         
         Args:
             session_id: Session identifier
-            timeout: Maximum wait time in milliseconds for view tracking and triangulation.
+            template_points: Optional list of template points for filtering or fitting.
+                Each point must have a 'name' field. x,y,z coordinates are optional.
+                
+                Modes:
+                1. Fitting mode: All points have x,y,z coordinates
+                   - Uses fitting_multiview() to estimate local-to-world transformation
+                   - Returns local2world transformation matrix
+                   Example: [
+                       {'name': 'corner1', 'x': 0.0, 'y': 0.0, 'z': 0.0},
+                       {'name': 'corner2', 'x': 0.5, 'y': 0.0, 'z': 0.0}
+                   ]
+                
+                2. Filtered triangulation: Some/all points missing x,y,z
+                   - Uses triangulate_multiview() with name-based filtering
+                   - Only triangulates points matching template names
+                   Example: [
+                       {'name': 'point1'},
+                       {'name': 'point2'}
+                   ]
+                
+                3. Standard triangulation: template_points not provided
+                   - Uses all tracked keypoints from all views
+                   - Requires views to use same reference image
+            
+            timeout: Maximum wait time in milliseconds for view tracking and computation.
                     Default: 30000ms (30 seconds)
             
         Returns:
-            Triangulation result with 3D points and per-view keypoints.
+            Triangulation/fitting result with 3D points, per-view keypoints, and
+            local2world transformation (if fitting mode used).
         """
         try:
+            # Prepare request data
+            request_data = {}
+            if template_points is not None:
+                request_data['template_points'] = template_points
+            
             # Call server endpoint with timeout parameter
-            # Server will trigger triangulation and wait for tracking
+            # Server will trigger computation and wait for tracking
             response = self.session.get(
                 f"{self.service_url}/result/{session_id}",
-                params={'timeout': timeout}
+                params={'timeout': timeout},
+                json=request_data if request_data else None
             )
             response.raise_for_status()
             return response.json()

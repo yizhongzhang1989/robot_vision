@@ -92,13 +92,14 @@ class View:
 
 @dataclass
 class TriangulationResult:
-    """Result of 3D triangulation."""
+    """Result of 3D triangulation or fitting."""
     success: bool
     points_3d: Optional[Any] = None  # Can be np.ndarray or List[np.ndarray or None]
     reprojection_errors: Optional[Any] = None  # Can be List[np.ndarray] or List[List[float or None]]
     mean_error: Optional[float] = None
     error_message: Optional[str] = None
     processing_time: Optional[float] = None
+    local2world: Optional[np.ndarray] = None  # For fitting: 4x4 transformation matrix from local to world coordinates
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -107,6 +108,10 @@ class TriangulationResult:
             'error_message': self.error_message,
             'processing_time': self.processing_time
         }
+        
+        # Add local2world transformation if available (from fitting)
+        if self.local2world is not None:
+            data['local2world'] = self.local2world.tolist() if isinstance(self.local2world, np.ndarray) else self.local2world
         
         if self.success and self.points_3d is not None:
             # Handle both np.ndarray and List formats (List may contain None values)
