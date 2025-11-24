@@ -23,8 +23,11 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
     
     Args:
         view_data: List of view dictionaries. Each view should contain:
-            - 'points_2d': np.ndarray of shape (N, 2) - 2D pixel coordinates (x, y)
-                          in OpenCV convention where top-left pixel center is at (0, 0)
+            - 'points_2d': List or np.ndarray of length N - 2D pixel coordinates
+                          Each element can be:
+                          - np.ndarray of shape (2,) with (x, y) coordinates
+                          - None to indicate the point is not detected in this view
+                          All views must have the same length N (same number of points)
             - 'image_size': tuple (width, height) - Image dimensions in pixels
             - 'intrinsic': np.ndarray of shape (3, 3) - Camera intrinsic matrix (K)
                           [[fx, 0, cx],
@@ -40,21 +43,25 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
             
             Example view:
             {
-                'points_2d': np.array([[100.5, 200.3], [150.2, 180.7]]),
+                'points_2d': [np.array([100.5, 200.3]), None, np.array([150.2, 180.7])],
                 'image_size': (1920, 1080),
                 'intrinsic': np.array([[800, 0, 960], [0, 800, 540], [0, 0, 1]]),
                 'distortion': np.array([0.1, -0.05, 0, 0, 0]),
                 'extrinsic': np.eye(4)  # World to camera transformation
             }
+            Note: Second point is None, indicating it's not detected in this view
     
     Returns:
         Dict containing triangulation results:
         {
             'success': bool - Whether triangulation succeeded
-            'points_3d': np.ndarray of shape (N, 3) - Triangulated 3D points in world coordinates
-            'reprojection_errors': List[np.ndarray] - Per-point reprojection errors for each view
-                List of length num_views, where each element is an np.ndarray of shape (N,)
-                containing the reprojection error in pixels for each of the N points in that view
+            'points_3d': List[np.ndarray or None] - Triangulated 3D points in world coordinates
+                List of length N, where each element is either:
+                - np.ndarray of shape (3,) for successfully triangulated points
+                - None for points with insufficient valid views (< 2 views)
+            'reprojection_errors': List[List[float or None]] - Per-point reprojection errors
+                List of length num_views, where each element is a list of length N
+                containing reprojection error in pixels or None for missing detections
             'error_message': str - Error message if success is False (only present when success=False)
         }
     
@@ -135,30 +142,46 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         undistorted_points = []
         
         for i, view in enumerate(view_data):
-            points_2d = np.array(view['points_2d'], dtype=np.float32)
+            points_2d_list = view['points_2d']
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
             
-            # Check if distortion is provided
-            if 'distortion' in view:
-                distortion = np.array(view['distortion'], dtype=np.float64)
+            # Separate valid points from None values
+            valid_indices = [idx for idx, pt in enumerate(points_2d_list) if pt is not None]
+            valid_points = [pt for pt in points_2d_list if pt is not None]
+            
+            if len(valid_points) > 0:
+                valid_points_array = np.array(valid_points, dtype=np.float32)
                 
-                # Reshape for cv2.undistortPoints
-                points_reshaped = points_2d.reshape(-1, 1, 2)
+                # Check if distortion is provided
+                if 'distortion' in view:
+                    distortion = np.array(view['distortion'], dtype=np.float64)
+                    
+                    # Reshape for cv2.undistortPoints
+                    points_reshaped = valid_points_array.reshape(-1, 1, 2)
+                    
+                    # Undistort points and normalize to camera coordinates
+                    # Then project back to pixel coordinates using intrinsic matrix
+                    undistorted = cv2.undistortPoints(
+                        points_reshaped,
+                        intrinsic,
+                        distortion,
+                        P=intrinsic
+                    )
+                    
+                    undistorted_valid = undistorted.reshape(-1, 2)
+                else:
+                    # Points are already undistorted
+                    undistorted_valid = valid_points_array
                 
-                # Undistort points and normalize to camera coordinates
-                # Then project back to pixel coordinates using intrinsic matrix
-                undistorted = cv2.undistortPoints(
-                    points_reshaped,
-                    intrinsic,
-                    distortion,
-                    P=intrinsic
-                )
+                # Reconstruct full list with None for missing points
+                undistorted_full = [None] * num_points
+                for valid_idx, undist_pt in zip(valid_indices, undistorted_valid):
+                    undistorted_full[valid_idx] = undist_pt
                 
-                undistorted_2d = undistorted.reshape(-1, 2)
-                undistorted_points.append(undistorted_2d)
+                undistorted_points.append(undistorted_full)
             else:
-                # Points are already undistorted
-                undistorted_points.append(points_2d)
+                # All points are None for this view
+                undistorted_points.append([None] * num_points)
         
         # ========================================
         # PREPARE PROJECTION MATRICES
@@ -194,29 +217,41 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
         # TRIANGULATE POINTS
         # ========================================
         
-        points_3d = np.zeros((num_points, 3))
+        points_3d = []
         
         for point_idx in range(num_points):
-            # Collect 2D observations for this point from all views
-            observations_2d = [undistorted_points[view_idx][point_idx] 
-                              for view_idx in range(len(view_data))]
+            # Collect valid 2D observations for this point from all views
+            valid_observations = []
+            valid_projections = []
             
-            # Triangulate using DLT
-            point_3d = _triangulate_dlt(observations_2d, projection_matrices)
-            points_3d[point_idx] = point_3d
+            for view_idx in range(len(view_data)):
+                obs = undistorted_points[view_idx][point_idx]
+                if obs is not None:
+                    valid_observations.append(obs)
+                    valid_projections.append(projection_matrices[view_idx])
+            
+            # Need at least 2 valid views to triangulate
+            if len(valid_observations) >= 2:
+                # Triangulate using DLT
+                point_3d = _triangulate_dlt(valid_observations, valid_projections)
+                points_3d.append(point_3d)
+            else:
+                # Not enough valid views for this point
+                points_3d.append(None)
         
         # ========================================
         # CALCULATE REPROJECTION ERRORS
         # ========================================
         
         # reprojection_errors: List of per-point errors for each view
-        # Shape: List[np.ndarray] where each array has shape (num_points,)
+        # Shape: List[List] where each list has length num_points
+        # Elements are either float (error in pixels) or None (missing detection or invalid 3D point)
         reprojection_errors = []
         
         for view_idx, view in enumerate(view_data):
             intrinsic = np.array(view['intrinsic'], dtype=np.float64)
             extrinsic = np.array(view['extrinsic'], dtype=np.float64)
-            original_points_2d = np.array(view['points_2d'], dtype=np.float32)
+            original_points_2d_list = view['points_2d']
             
             # Check if distortion is provided
             if 'distortion' in view:
@@ -225,25 +260,39 @@ def triangulate_multiview(view_data: List[Dict]) -> Dict:
                 # No distortion - use zero distortion coefficients
                 distortion = np.zeros(5, dtype=np.float64)
             
-            # Project 3D points back to 2D
+            # Prepare for projection
             R = extrinsic[:3, :3]
             t = extrinsic[:3, 3]
             rvec, _ = cv2.Rodrigues(R)
             tvec = t.reshape(-1, 1)
             
-            # Project points
-            projected_points, _ = cv2.projectPoints(
-                points_3d.astype(np.float64),
-                rvec,
-                tvec,
-                intrinsic,
-                distortion
-            )
-            projected_points = projected_points.reshape(-1, 2)
+            # Calculate error for each point
+            view_errors = []
+            for point_idx in range(num_points):
+                original_2d = original_points_2d_list[point_idx]
+                point_3d = points_3d[point_idx]
+                
+                # Skip if either 2D or 3D point is None
+                if original_2d is None or point_3d is None:
+                    view_errors.append(None)
+                    continue
+                
+                # Project 3D point back to 2D
+                projected_point, _ = cv2.projectPoints(
+                    np.array([point_3d], dtype=np.float64),
+                    rvec,
+                    tvec,
+                    intrinsic,
+                    distortion
+                )
+                projected_point = projected_point.reshape(2)
+                
+                # Calculate reprojection error
+                original_2d_array = np.array(original_2d, dtype=np.float32)
+                error = np.linalg.norm(original_2d_array - projected_point)
+                view_errors.append(float(error))
             
-            # Calculate reprojection errors for each point
-            errors = np.linalg.norm(original_points_2d - projected_points, axis=1)
-            reprojection_errors.append(errors)
+            reprojection_errors.append(view_errors)
         
         # ========================================
         # PREPARE RESULTS

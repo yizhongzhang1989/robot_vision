@@ -196,7 +196,7 @@ def visualize_triangulation_3d(view_data, result):
     Create 3D visualization of triangulation results.
     
     Displays:
-    - Triangulated 3D points
+    - Triangulated 3D points (filtering out None values)
     - Camera positions and orientations
     - Lines connecting cameras to point cloud center
     - Quality metrics in the title
@@ -205,8 +205,8 @@ def visualize_triangulation_3d(view_data, result):
         view_data: List of view dictionaries containing camera parameters
         result: Dict from triangulate_multiview() with keys:
             - 'success': bool
-            - 'points_3d': np.ndarray of triangulated 3D points
-            - 'reprojection_errors': List[np.ndarray] of per-point errors
+            - 'points_3d': np.ndarray or List (may contain None values for invalid points)
+            - 'reprojection_errors': List[np.ndarray] or List[List] of per-point errors
     """
     print("\n[*] Opening 3D visualization...")
     print("-" * 80)
@@ -217,8 +217,23 @@ def visualize_triangulation_3d(view_data, result):
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d import Axes3D
         
-        points_3d = result['points_3d']
+        points_3d_raw = result['points_3d']
         reprojection_errors = result['reprojection_errors']
+        
+        # Filter out None values from points_3d (handle both np.ndarray and List)
+        if isinstance(points_3d_raw, np.ndarray):
+            points_3d = points_3d_raw
+            num_valid = len(points_3d)
+            num_invalid = 0
+        else:
+            # It's a list that may contain None values
+            points_3d = np.array([pt for pt in points_3d_raw if pt is not None])
+            num_valid = len(points_3d)
+            num_invalid = sum(1 for pt in points_3d_raw if pt is None)
+        
+        if num_valid == 0:
+            print("[!] No valid points to visualize")
+            return
         
         # Calculate camera centers from view data
         camera_centers = []
@@ -231,9 +246,18 @@ def visualize_triangulation_3d(view_data, result):
         camera_centers = np.array(camera_centers)
         
         # Calculate metrics
-        num_points = len(points_3d)
         num_views = len(view_data)
-        mean_reprojection_error = float(np.mean([np.mean(errors) for errors in reprojection_errors]))
+        
+        # Calculate mean reprojection error (handle both np.ndarray and List formats)
+        valid_errors = []
+        for errors in reprojection_errors:
+            if isinstance(errors, np.ndarray):
+                valid_errors.extend(errors.tolist())
+            else:
+                # It's a list that may contain None values
+                valid_errors.extend([e for e in errors if e is not None])
+        
+        mean_reprojection_error = float(np.mean(valid_errors)) if valid_errors else 0.0
         
         fig = plt.figure(figsize=(14, 10))
         ax = fig.add_subplot(111, projection='3d')
@@ -260,9 +284,16 @@ def visualize_triangulation_3d(view_data, result):
         ax.set_xlabel('X (m)', fontsize=12)
         ax.set_ylabel('Y (m)', fontsize=12)
         ax.set_zlabel('Z (m)', fontsize=12)
-        ax.set_title(f'3D Triangulation Result\n{num_points} points from {num_views} views\n'
-                    f'Mean reprojection error: {mean_reprojection_error:.3f} px',
-                    fontsize=14, fontweight='bold')
+        
+        if num_invalid > 0:
+            title = (f'3D Triangulation Result\n{num_valid} valid points from {num_views} views '
+                    f'({num_invalid} points with insufficient views)\n'
+                    f'Mean reprojection error: {mean_reprojection_error:.3f} px')
+        else:
+            title = (f'3D Triangulation Result\n{num_valid} points from {num_views} views\n'
+                    f'Mean reprojection error: {mean_reprojection_error:.3f} px')
+        
+        ax.set_title(title, fontsize=14, fontweight='bold')
         ax.legend(fontsize=11)
         
         # Equal aspect ratio
@@ -848,6 +879,173 @@ def test_error_handling():
     print("="*80)
 
 
+def test_triangulation_with_missing_detections(view_data, visualize=False):
+    """
+    Test triangulation with missing point detections (None values).
+    
+    This test demonstrates the ability to handle cases where certain points
+    are not detected in some views, which is common in real-world scenarios.
+    
+    Args:
+        view_data: List of view dicts from load_chessboard_test_data()
+        visualize: If True, display 3D visualization of triangulated points and cameras
+    """
+    print("\n" + "=" * 80)
+    print("Triangulation Test with Missing Detections")
+    print("=" * 80)
+    
+    # Create modified view data with randomly missing points
+    # Randomly set approximately half of the points to None in each view
+    np.random.seed(42)  # For reproducibility
+    
+    modified_view_data = []
+    num_points = len(view_data[0]['points_2d'])
+    
+    # Track which points are missing in which views
+    missing_matrix = []  # missing_matrix[view_idx][point_idx] = True if missing
+    
+    for view_idx, view in enumerate(view_data):
+        # Convert points_2d to list format
+        points_2d_array = np.array(view['points_2d'], dtype=np.float32)
+        points_2d_list = [points_2d_array[i] for i in range(num_points)]
+        
+        # Randomly select half of the points to set as None
+        num_to_remove = num_points // 2
+        indices_to_remove = np.random.choice(num_points, size=num_to_remove, replace=False)
+        
+        missing_in_view = [False] * num_points
+        for idx in indices_to_remove:
+            points_2d_list[idx] = None
+            missing_in_view[idx] = True
+        
+        missing_matrix.append(missing_in_view)
+        
+        # Create modified view
+        modified_view = {
+            'points_2d': points_2d_list,
+            'image_size': view['image_size'],
+            'intrinsic': view['intrinsic'],
+            'distortion': view['distortion'],
+            'extrinsic': view['extrinsic']
+        }
+        modified_view_data.append(modified_view)
+    
+    # Count how many views each point appears in
+    view_counts = [sum(1 for view_idx in range(len(view_data)) 
+                       if not missing_matrix[view_idx][pt_idx])
+                   for pt_idx in range(num_points)]
+    
+    num_points_with_enough_views = sum(1 for count in view_counts if count >= 2)
+    num_points_insufficient = sum(1 for count in view_counts if count < 2)
+    
+    print(f"[*] Test scenario:")
+    print(f"   - {num_points} points total")
+    print(f"   - {len(view_data)} camera views")
+    print(f"   - Randomly removed ~50% of points from each view")
+    print(f"   - {num_points_with_enough_views} points visible in ≥2 views (can be triangulated)")
+    print(f"   - {num_points_insufficient} points visible in <2 views (insufficient)")
+    
+    # Triangulate
+    print("\n[*] Running triangulation...")
+    result = triangulate_multiview(modified_view_data)
+    
+    if not result['success']:
+        print(f"\n[-] Triangulation failed: {result.get('error_message')}")
+        return {'error': result.get('error_message')}
+    
+    points_3d = result['points_3d']
+    reprojection_errors = result['reprojection_errors']
+    
+    # Count valid and invalid points
+    num_valid = sum(1 for pt in points_3d if pt is not None)
+    num_invalid = sum(1 for pt in points_3d if pt is None)
+    
+    print(f"[+] Triangulation completed")
+    print(f"   - {num_valid} points successfully triangulated")
+    print(f"   - {num_invalid} points with insufficient views (returned as None)")
+    
+    # Verify results match expectations
+    print("\n[*] Verifying results...")
+    
+    # Check that points with ≥2 views were triangulated
+    validation_failed = False
+    for pt_idx in range(num_points):
+        expected_valid = view_counts[pt_idx] >= 2
+        actual_valid = points_3d[pt_idx] is not None
+        
+        if expected_valid and not actual_valid:
+            print(f"   [-] Point {pt_idx}: Expected triangulation ({view_counts[pt_idx]} views) but got None")
+            validation_failed = True
+        elif not expected_valid and actual_valid:
+            print(f"   [-] Point {pt_idx}: Expected None ({view_counts[pt_idx]} views) but got triangulation")
+            validation_failed = True
+    
+    if not validation_failed:
+        print(f"   [+] All points correctly triangulated or returned as None based on view count")
+    
+    # Verify reprojection error structure
+    print("\n[*] Checking reprojection errors...")
+    
+    # Count None values in reprojection errors per view
+    none_count_per_view = [sum(1 for err in view_errors if err is None) 
+                           for view_errors in reprojection_errors]
+    
+    for view_idx in range(len(view_data)):
+        print(f"   - View {view_idx+1}: {none_count_per_view[view_idx]} missing/invalid points")
+    
+    # Verify that None errors match missing points or invalid 3D points
+    for view_idx in range(len(view_data)):
+        for pt_idx in range(num_points):
+            error_is_none = reprojection_errors[view_idx][pt_idx] is None
+            point_missing = missing_matrix[view_idx][pt_idx]
+            point_3d_invalid = points_3d[pt_idx] is None
+            
+            # Error should be None if point is missing in view OR 3D point is invalid
+            expected_none = point_missing or point_3d_invalid
+            
+            if expected_none and not error_is_none:
+                print(f"   [-] View {view_idx}, Point {pt_idx}: Expected None error but got value")
+                validation_failed = True
+            elif not expected_none and error_is_none:
+                print(f"   [-] View {view_idx}, Point {pt_idx}: Expected error value but got None")
+                validation_failed = True
+    
+    if not validation_failed:
+        print(f"   [+] Reprojection error structure is correct")
+    
+    # Calculate mean error for valid points
+    valid_errors = []
+    for view_errors in reprojection_errors:
+        valid_errors.extend([err for err in view_errors if err is not None])
+    
+    if valid_errors:
+        mean_error = np.mean(valid_errors)
+        max_error = np.max(valid_errors)
+        print(f"\n[*] Reprojection error statistics:")
+        print(f"   - Mean: {mean_error:.3f} pixels")
+        print(f"   - Max: {max_error:.3f} pixels")
+    
+    # ========================================
+    # VISUALIZATION
+    # ========================================
+    
+    if visualize:
+        # Prepare result dict for visualization
+        vis_result = {
+            'success': True,
+            'points_3d': points_3d,
+            'reprojection_errors': reprojection_errors
+        }
+        visualize_triangulation_3d(view_data, vis_result)
+    
+    return {
+        'num_points_total': len(points_3d),
+        'num_points_valid': num_valid,
+        'num_points_invalid': num_invalid,
+        'mean_reprojection_error': mean_error if valid_errors else 0.0
+    }
+
+
 def main():
     """
     Main function to run triangulation examples.
@@ -953,7 +1151,24 @@ def main():
             if view_plane_result['max_z_deviation'] is not None:
                 print(f"  - Max Z deviation: {view_plane_result['max_z_deviation']:.6f} m")
         
-        # Test 4: Error handling tests
+        # Test 4: Triangulation with missing detections
+        missing_detection_result = test_triangulation_with_missing_detections(
+            view_data=view_data,
+            visualize=True
+            # visualize=args.visualize
+        )
+        
+        if 'error' in missing_detection_result:
+            print(f"\n[!] Test 4 completed with issues: {missing_detection_result['error']}")
+        else:
+            print("\n[+] Test 4 completed successfully!")
+            print("\nTest 4 Results:")
+            print(f"  - Total points: {missing_detection_result['num_points_total']}")
+            print(f"  - Successfully triangulated: {missing_detection_result['num_points_valid']}")
+            print(f"  - Insufficient views: {missing_detection_result['num_points_invalid']}")
+            print(f"  - Mean reprojection error: {missing_detection_result['mean_reprojection_error']:.3f} pixels")
+        
+        # Test 5: Error handling tests
         test_error_handling()
         
         sys.exit(0)
