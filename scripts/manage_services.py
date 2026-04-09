@@ -77,10 +77,20 @@ class ServiceManager:
                     print(f"❌ Service app file not found: {app_file}")
                     return False
                 
+                # Build command with port argument
+                cmd = [
+                    sys.executable, str(app_file),
+                    "--port", str(service_info['port'])
+                ]
+                
+                # Pass dependency service URLs based on configured ports
+                dependencies = service_info.get('dependencies', [])
+                if 'ffpp_keypoint_tracking' in dependencies:
+                    ffpp_port = self.config['services'].get('ffpp_keypoint_tracking', {}).get('port', 8001)
+                    cmd.extend(["--ffpp-url", f"http://localhost:{ffpp_port}"])
+                
                 # Start the FastAPI service
-                process = subprocess.Popen([
-                    sys.executable, str(app_file)
-                ], cwd=str(service_path))
+                process = subprocess.Popen(cmd, cwd=str(service_path))
             
             # Track the process for both service types
             self.running_processes[service_name] = process
