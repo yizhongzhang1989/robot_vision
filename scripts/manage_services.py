@@ -144,7 +144,8 @@ class ServiceManager:
                 time.sleep(2)  # Small delay between service starts
         
         print(f"\n🎉 Started {len(self.running_processes)} services")
-        print("🌐 Access Control Center at: http://localhost:8000")
+        gateway_port = self.config.get('gateway', {}).get('port', 8000)
+        print(f"🌐 Access Control Center at: http://localhost:{gateway_port}")
         return True
     
     def stop_all_services(self):

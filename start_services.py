@@ -27,14 +27,12 @@ try:
         if manager.start_all_services():
             # Get ports from config
             gateway_port = manager.config.get('gateway', {}).get('port', 8000)
-            ffpp_port = manager.config.get('services', {}).get('ffpp_keypoint_tracking', {}).get('port', 8001)
-            labeling_port = manager.config.get('services', {}).get('image_labeling', {}).get('port', 8003)
             
             print("\n🎉 All services started successfully!")
             print("\n📋 Service URLs:")
             print(f"   🤖 Control Center: http://localhost:{gateway_port}")
-            print(f"   🎯 FlowFormer++ Keypoint Tracking: http://localhost:{ffpp_port}")  
-            print(f"   🏷️ Image Labeling: http://localhost:{labeling_port}")
+            for svc_name, svc_info in manager.config.get('services', {}).items():
+                print(f"   🔹 {svc_info['name']}: http://localhost:{svc_info['port']}")
             print("\n💡 Tip: Access the Control Center to manage all services")
             
             # Wait for user input to keep services running
