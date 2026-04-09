@@ -68,6 +68,8 @@ get_python_cmd() {
     
     if [ "$skip_conda" = false ] && conda env list 2>/dev/null | grep -q "^${CONDA_ENV_NAME}"; then
         echo "conda run -n $CONDA_ENV_NAME python"
+    elif command -v python3 &>/dev/null; then
+        echo "python3"
     else
         echo "python"
     fi
@@ -79,6 +81,8 @@ get_pip_cmd() {
     
     if [ "$skip_conda" = false ] && conda env list 2>/dev/null | grep -q "^${CONDA_ENV_NAME}"; then
         echo "conda run -n $CONDA_ENV_NAME pip"
+    elif command -v pip3 &>/dev/null; then
+        echo "pip3"
     else
         echo "pip"
     fi
