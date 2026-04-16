@@ -9,7 +9,7 @@ service:
 
 # FFPP Server Configuration
 ffpp_server:
-  host: "msraig-ubuntu-3"  # Default remote host (can override with --ffpp-url)
+  host: "localhost"  # Default host (can override with --ffpp-url)
   port: 8001
   timeout: 30
   retry_attempts: 1  # Reduced for faster startup during testing

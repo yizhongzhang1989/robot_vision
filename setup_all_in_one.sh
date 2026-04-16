@@ -117,7 +117,7 @@ echo "You can now:"
 if [ "$SKIP_CONDA" = false ]; then
     echo "  • Activate environment: conda activate robot_vision"
 fi
-echo "  • Run examples: cd examples && python keypoint_tracker_simple.py"
+echo "  • Run examples: cd examples && python ffpp_keypoint_tracker_example.py"
 echo "  • Start web services: python start_services.py"
 echo "  • Test installation: scripts/run_tests.sh quick"
 echo ""

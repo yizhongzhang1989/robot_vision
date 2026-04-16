@@ -1502,6 +1502,11 @@ if __name__ == "__main__":
     port = args.port or service_config.get('port', 8004)
     debug = service_config.get('debug', False)
     
+    # Update config so status endpoints reflect actual runtime values
+    if 'service' not in config:
+        config['service'] = {}
+    config['service']['port'] = port
+    
     logger.info("=" * 60)
     logger.info("✅ 3D Positioning Service Ready!")
     logger.info(f"🌐 Access at: http://localhost:{port}")
