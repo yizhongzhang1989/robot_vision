@@ -12,7 +12,8 @@ Date: November 2025
 import numpy as np
 import cv2
 from typing import List, Dict, Tuple, Optional
-from scipy.optimize import least_squares
+from itertools import combinations
+from scipy.optimize import least_squares, brentq, minimize_scalar
 
 
 def triangulate_multiview(view_data: List[Dict]) -> Dict:
@@ -484,30 +485,50 @@ def fitting_multiview(view_data: List[Dict], target_point3d_local: List[np.ndarr
             rotvec_init, _ = cv2.Rodrigues(R_init)
             rotvec_init = rotvec_init.flatten()
         else:
-            # Fallback initial guess:
-            # R = I, t shift model centroid to average of per-observation closest points.
-            R_init = np.eye(3)
-            rotvec_init = np.zeros(3, dtype=np.float64)
-            centroid_model = model_pts.mean(axis=0) if len(model_pts) > 0 else np.zeros(3)
-            closest_points = []
+            # Closed-form GP3P initial guess: each model point usually has
+            # exactly one ray here (otherwise it would have been triangulated
+            # above).  We feed every available ray into the scoring step but
+            # use only the first ray per model point for the algebraic step.
+            points_obs: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+            all_rays: List[Tuple[int, np.ndarray, np.ndarray]] = []
             for vidx in range(len(view_data)):
                 for pi in range(N):
                     ray = rays_per_view[vidx][pi]
                     if ray is None:
                         continue
                     O, v = ray
-                    # project centroid_model (in candidate world as if R=I,t=0) onto ray
-                    # choose point on ray closest to centroid_model
-                    w = centroid_model - O
-                    s = np.dot(w, v)
-                    p_closest = O + s * v
-                    closest_points.append(p_closest)
-            if len(closest_points) > 0:
-                mean_p = np.mean(np.vstack(closest_points), axis=0)
-                t_init = mean_p - (R_init @ centroid_model)
+                    all_rays.append((pi, O, v))
+                    if pi not in points_obs:
+                        points_obs[pi] = (O, v)
+
+            gp3p_rt = _gp3p_initial_rt(model_pts, points_obs, all_rays)
+            if gp3p_rt is not None:
+                R_init, t_init = gp3p_rt
+                rotvec_init, _ = cv2.Rodrigues(R_init)
+                rotvec_init = rotvec_init.flatten()
             else:
-                # no observations at all? shouldn't happen due to validation, but be safe
-                t_init = np.zeros(3, dtype=np.float64)
+                # Last-resort fallback (no valid GP3P candidate — e.g. <3
+                # observed model points or degenerate ray geometry):
+                # R = I, t shifts model centroid to the average per-ray
+                # closest point.
+                R_init = np.eye(3)
+                rotvec_init = np.zeros(3, dtype=np.float64)
+                centroid_model = model_pts.mean(axis=0) if len(model_pts) > 0 else np.zeros(3)
+                closest_points = []
+                for vidx in range(len(view_data)):
+                    for pi in range(N):
+                        ray = rays_per_view[vidx][pi]
+                        if ray is None:
+                            continue
+                        O, v = ray
+                        w = centroid_model - O
+                        s = np.dot(w, v)
+                        closest_points.append(O + s * v)
+                if len(closest_points) > 0:
+                    mean_p = np.mean(np.vstack(closest_points), axis=0)
+                    t_init = mean_p - (R_init @ centroid_model)
+                else:
+                    t_init = np.zeros(3, dtype=np.float64)
 
         x0 = np.hstack([rotvec_init.reshape(3,), t_init.reshape(3,)])
 
@@ -915,6 +936,238 @@ def _umeyama(A: np.ndarray, B: np.ndarray, with_scale: bool = False) -> Tuple[fl
         scale = 1.0
     t = muB - scale * (R @ muA)
     return scale, R, t
+
+
+# ---------------------------------------------------------------------------
+# Generalised P3P (non-central P3P) — closed-form initial guess for
+# fitting_multiview when fewer than 3 model points have ≥2 observations.
+# ---------------------------------------------------------------------------
+#
+# Reference: Nistér & Stewenius, "A Minimal Solution to the Generalised
+# 3-Point Pose Problem" (CVPR 2007); Kneip et al., "Using Multi-Camera
+# Systems in Robotics: Efficient Solutions to the NPnP Problem" (ICRA 2013).
+#
+# Given 3 model points X_i (i = 0, 1, 2) in the local frame and 3 world-
+# frame rays ``O_i + λ_i d_i``, find rigid (R, t) such that
+# ``R · X_i + t = O_i + λ_i · d_i`` for i = 0, 1, 2.  Rigidity ⇒ three
+# pairwise-distance quadratics in (λ_0, λ_1, λ_2).  We isolate λ_0 by
+# expressing ``f_{01}`` as a quadratic in λ_1 (two branches) and ``f_{02}``
+# as a quadratic in λ_2 (two branches), then evaluate ``f_{12}`` along each
+# of the four branches as a function of λ_0 — its roots (or, for noisy
+# data, its local minima) are the candidate λ_0 values.
+
+def _gp3p_depths(O: np.ndarray, d: np.ndarray, X: np.ndarray,
+                 lam_max: float = 20.0, n_grid: int = 400) -> List[Tuple[float, float, float]]:
+    """Return every (λ_0, λ_1, λ_2) with positive depths satisfying the
+    three rigid pairwise-distance constraints for the 3 (point, ray) inputs.
+
+    For noiseless data this returns exact algebraic roots (sign changes of
+    each branch's univariate residual ``h_{k1,k2}(λ_0)``).  For noisy data
+    the algebraic system may be infeasible (no real root); local minima of
+    ``|h_{k1,k2}|`` and the discriminant-boundary values are also harvested
+    as approximate candidates so that the downstream LM refinement always
+    receives a well-placed initial guess.
+    """
+    D01_sq = float(np.dot(X[0] - X[1], X[0] - X[1]))
+    D02_sq = float(np.dot(X[0] - X[2], X[0] - X[2]))
+    D12_sq = float(np.dot(X[1] - X[2], X[1] - X[2]))
+
+    dot01 = float(np.dot(d[0], d[1]))
+    dot02 = float(np.dot(d[0], d[2]))
+    dot12 = float(np.dot(d[1], d[2]))
+
+    delta01 = O[0] - O[1]
+    delta02 = O[0] - O[2]
+    delta12 = O[1] - O[2]
+
+    sq01 = float(np.dot(delta01, delta01))
+    sq02 = float(np.dot(delta02, delta02))
+    sq12 = float(np.dot(delta12, delta12))
+
+    delta01_d0 = float(np.dot(delta01, d[0]))
+    delta01_d1 = float(np.dot(delta01, d[1]))
+    delta02_d0 = float(np.dot(delta02, d[0]))
+    delta02_d2 = float(np.dot(delta02, d[2]))
+    delta12_d1 = float(np.dot(delta12, d[1]))
+    delta12_d2 = float(np.dot(delta12, d[2]))
+
+    def lam1_branches(lam0: float) -> Optional[Tuple[float, float]]:
+        # f_01(lam0, lam1) = 0 as a quadratic in lam1:
+        #   lam1² + B·lam1 + C = 0
+        #   B = -2 lam0 (d0·d1) - 2 (O0-O1)·d1
+        #   C = lam0² + 2 lam0 (O0-O1)·d0 + |O0-O1|² - |X0-X1|²
+        B = -2.0 * lam0 * dot01 - 2.0 * delta01_d1
+        C = lam0 * lam0 + 2.0 * lam0 * delta01_d0 + sq01 - D01_sq
+        disc = B * B - 4.0 * C
+        if disc < 0.0:
+            return None
+        s = float(np.sqrt(disc))
+        return ((-B + s) * 0.5, (-B - s) * 0.5)
+
+    def lam2_branches(lam0: float) -> Optional[Tuple[float, float]]:
+        B = -2.0 * lam0 * dot02 - 2.0 * delta02_d2
+        C = lam0 * lam0 + 2.0 * lam0 * delta02_d0 + sq02 - D02_sq
+        disc = B * B - 4.0 * C
+        if disc < 0.0:
+            return None
+        s = float(np.sqrt(disc))
+        return ((-B + s) * 0.5, (-B - s) * 0.5)
+
+    def f12(lam1: float, lam2: float) -> float:
+        return (lam1 * lam1 + lam2 * lam2
+                - 2.0 * lam1 * lam2 * dot12
+                + 2.0 * (lam1 * delta12_d1 - lam2 * delta12_d2)
+                + sq12 - D12_sq)
+
+    def h_branch(lam0: float, k1: int, k2: int) -> float:
+        l1s = lam1_branches(lam0)
+        l2s = lam2_branches(lam0)
+        if l1s is None or l2s is None:
+            return float('nan')
+        return f12(l1s[k1], l2s[k2])
+
+    def make_triple(lam0: float, k1: int, k2: int) -> Optional[Tuple[float, float, float]]:
+        l1s = lam1_branches(lam0)
+        l2s = lam2_branches(lam0)
+        if l1s is None or l2s is None:
+            return None
+        lam1, lam2 = l1s[k1], l2s[k2]
+        if lam0 < 0.0 or lam1 < 0.0 or lam2 < 0.0:
+            return None
+        return (float(lam0), float(lam1), float(lam2))
+
+    grid = np.linspace(0.0, lam_max, n_grid + 1)
+    candidates: List[Tuple[float, float, float]] = []
+
+    for k1 in (0, 1):
+        for k2 in (0, 1):
+            vals = np.array([h_branch(g, k1, k2) for g in grid])
+            valid = np.isfinite(vals)
+
+            # (a) Exact roots — sign changes of h on the branch.
+            for i in range(len(grid) - 1):
+                if not (valid[i] and valid[i + 1]):
+                    continue
+                a, b = vals[i], vals[i + 1]
+                if a * b > 0:
+                    continue
+                if a == 0.0:
+                    lam0 = float(grid[i])
+                else:
+                    try:
+                        lam0 = float(brentq(lambda l: h_branch(l, k1, k2),
+                                            grid[i], grid[i + 1], xtol=1e-9))
+                    except (ValueError, RuntimeError):
+                        continue
+                triple = make_triple(lam0, k1, k2)
+                if triple is not None:
+                    candidates.append(triple)
+
+            # (b) Local minima of |h| — robust to noise (no real root).
+            # Identify contiguous valid windows and scan for interior minima
+            # and edge values (close to the discriminant boundary).
+            i = 0
+            n = len(grid)
+            while i < n:
+                if not valid[i]:
+                    i += 1
+                    continue
+                j = i
+                while j + 1 < n and valid[j + 1]:
+                    j += 1
+                if j - i >= 2:
+                    abs_vals = np.abs(vals[i:j + 1])
+                    for k in range(1, len(abs_vals) - 1):
+                        if abs_vals[k] < abs_vals[k - 1] and abs_vals[k] < abs_vals[k + 1]:
+                            try:
+                                opt = minimize_scalar(
+                                    lambda l: h_branch(l, k1, k2) ** 2,
+                                    bracket=(grid[i + k - 1], grid[i + k], grid[i + k + 1]),
+                                    method='brent',
+                                    options={'xtol': 1e-9},
+                                )
+                                lam0 = float(opt.x)
+                            except (ValueError, RuntimeError):
+                                lam0 = float(grid[i + k])
+                            triple = make_triple(lam0, k1, k2)
+                            if triple is not None:
+                                candidates.append(triple)
+                for edge in (i, j):
+                    triple = make_triple(float(grid[edge]), k1, k2)
+                    if triple is not None:
+                        candidates.append(triple)
+                i = j + 1
+
+    # Deduplicate near-identical triples.
+    unique: List[Tuple[float, float, float]] = []
+    for c in candidates:
+        if all(abs(c[0] - u[0]) + abs(c[1] - u[1]) + abs(c[2] - u[2]) > 1e-3
+               for u in unique):
+            unique.append(c)
+    return unique
+
+
+def _gp3p_initial_rt(model_pts: np.ndarray,
+                     points_obs: Dict[int, Tuple[np.ndarray, np.ndarray]],
+                     all_rays: List[Tuple[int, np.ndarray, np.ndarray]],
+                     max_triplets: int = 50) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """Enumerate GP3P over model-point triplets to build a closed-form initial
+    (R, t).  Returns the candidate with the lowest sum-of-squared point-to-ray
+    distance over ``all_rays``, or ``None`` if no candidate is found.
+
+    Args:
+        model_pts: ``(N, 3)`` template points in local frame.
+        points_obs: map ``point_index → (O_world, d_world_unit)`` for the
+            single ray used per point during GP3P enumeration (typically the
+            *first* available observation per point).
+        all_rays: list of ``(point_index, O_world, d_world_unit)`` for every
+            available (view, point) observation — used only to score
+            candidates, never inside GP3P itself.
+        max_triplets: safety cap on how many triplets to try (combinatorial).
+
+    Returns:
+        Tuple ``(R, t)`` of shape ``(3,3), (3,)``, or ``None``.
+    """
+    obs_indices = sorted(points_obs.keys())
+    if len(obs_indices) < 3:
+        return None
+
+    # Enumerate point triplets (capped).
+    triplets = list(combinations(obs_indices, 3))
+    if len(triplets) > max_triplets:
+        triplets = triplets[:max_triplets]
+
+    best_R: Optional[np.ndarray] = None
+    best_t: Optional[np.ndarray] = None
+    best_score = float('inf')
+
+    for triplet in triplets:
+        O_arr = np.array([points_obs[pi][0] for pi in triplet], dtype=np.float64)
+        d_arr = np.array([points_obs[pi][1] for pi in triplet], dtype=np.float64)
+        X_arr = np.array([model_pts[pi] for pi in triplet], dtype=np.float64)
+        depth_list = _gp3p_depths(O_arr, d_arr, X_arr)
+        for lambdas in depth_list:
+            p_world = np.array([O_arr[i] + lambdas[i] * d_arr[i] for i in range(3)],
+                               dtype=np.float64)
+            try:
+                _, R_cand, t_cand = _umeyama(X_arr, p_world, with_scale=False)
+            except Exception:
+                continue
+            # Score by point-to-ray over ALL observations.
+            score = 0.0
+            for pi, O, vec in all_rays:
+                Xw = R_cand @ model_pts[pi] + t_cand
+                diff = Xw - O
+                perp = diff - vec * float(vec @ diff)
+                score += float(perp @ perp)
+            if score < best_score:
+                best_score = score
+                best_R = R_cand
+                best_t = t_cand
+
+    if best_R is None or best_t is None:
+        return None
+    return best_R, best_t
 
 
 def _triangulate_dlt_local(points_2d: List[np.ndarray], proj_mats: List[np.ndarray]) -> np.ndarray:
